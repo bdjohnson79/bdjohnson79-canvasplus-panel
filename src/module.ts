@@ -1,40 +1,35 @@
 import { PanelPlugin } from '@grafana/data';
-import { SimpleOptions } from './types';
-import { SimplePanel } from './components/SimplePanel';
+import { CanvasOptions } from './types';
+import { CanvasPanel } from './components/CanvasPanel';
 
-export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOptions((builder) => {
-  return builder
-    .addTextInput({
-      path: 'text',
-      name: 'Simple text option',
-      description: 'Description of panel option',
-      defaultValue: 'Default value of text input option',
-    })
-    .addBooleanSwitch({
-      path: 'showSeriesCount',
-      name: 'Show series counter',
-      defaultValue: false,
-    })
-    .addRadio({
-      path: 'seriesCountSize',
-      defaultValue: 'sm',
-      name: 'Series counter size',
-      settings: {
-        options: [
-          {
-            value: 'sm',
-            label: 'Small',
-          },
-          {
-            value: 'md',
-            label: 'Medium',
-          },
-          {
-            value: 'lg',
-            label: 'Large',
-          },
-        ],
-      },
-      showIf: (config) => config.showSeriesCount,
-    });
-});
+const defaultOptions: Partial<CanvasOptions> = {
+  elements: [],
+  connections: [],
+  background: { color: 'transparent' },
+  inlineEditing: false,
+  panZoom: false,
+};
+
+export const plugin = new PanelPlugin<CanvasOptions>(CanvasPanel)
+  .setNoPadding()
+  .setPanelOptions((builder) =>
+    builder
+      .addBooleanSwitch({
+        path: 'inlineEditing',
+        name: 'Enable editing',
+        description: 'Show drag/resize controls and element toolbar',
+        defaultValue: false,
+      })
+      .addBooleanSwitch({
+        path: 'panZoom',
+        name: 'Pan & zoom',
+        description: 'Allow scrolling to zoom and middle-click drag to pan',
+        defaultValue: false,
+      })
+      .addColorPicker({
+        path: 'background.color',
+        name: 'Background color',
+        defaultValue: 'transparent',
+      })
+  )
+  .setDefaults(defaultOptions as CanvasOptions);
