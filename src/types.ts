@@ -81,4 +81,7 @@ export interface CanvasOptions {
   background: { color: string; image?: string };
   inlineEditing: boolean;
   panZoom: boolean;
+  /** Written by the panel on mount/resize so sidebar editors can use panel dimensions. */
+  _panelWidth?: number;
+  _panelHeight?: number;
 }

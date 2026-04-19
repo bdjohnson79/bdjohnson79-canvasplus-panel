@@ -1,18 +1,12 @@
 import React, { useState } from 'react';
 import { StandardEditorProps } from '@grafana/data';
-import {
-  Button,
-  ColorPickerInput,
-  Field,
-  Input,
-  Select,
-  useStyles2,
-  IconButton,
-} from '@grafana/ui';
+import { Button, ColorPickerInput, Field, IconButton, Input, Select, Tooltip, useStyles2 } from '@grafana/ui';
 import { GrafanaTheme2 } from '@grafana/data';
 import { css } from '@emotion/css';
-import { CanvasElement, ElementType, ColorConfig, TextConfig } from '../../types';
+import { CanvasElement, CanvasOptions, ColorConfig, ElementType, TextConfig } from '../../types';
 import { v4 as uuidv4 } from '../../utils/uuid';
+
+// ── Element type list ─────────────────────────────────────────────────────────
 
 const ELEMENT_TYPES: Array<{ label: string; value: ElementType }> = [
   { label: 'Rectangle', value: 'rectangle' },
@@ -24,6 +18,8 @@ const ELEMENT_TYPES: Array<{ label: string; value: ElementType }> = [
   { label: 'Triangle', value: 'triangle' },
   { label: 'Parallelogram', value: 'parallelogram' },
 ];
+
+// ── Default element factory ───────────────────────────────────────────────────
 
 function defaultElement(type: ElementType, zIndex: number): CanvasElement {
   const base: CanvasElement = {
@@ -56,23 +52,22 @@ function defaultElement(type: ElementType, zIndex: number): CanvasElement {
       base.text.color = { mode: 'fixed', value: '#cccccc' };
     }
   }
-
   if (type === 'icon') {
     base.iconName = 'database';
     base.iconColor = { mode: 'fixed', value: '#ffffff' };
     base.width = 60;
     base.height = 60;
   }
-
   if (type === 'server') {
     base.serverVariant = 'single';
     base.statusColor = { mode: 'fixed', value: '#73bf69' };
     base.width = 80;
     base.height = 100;
   }
-
   return base;
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fixedColor(cfg: ColorConfig): string {
   return cfg.mode === 'fixed' ? cfg.value : '#ffffff';
@@ -81,6 +76,47 @@ function fixedColor(cfg: ColorConfig): string {
 function fixedText(cfg: TextConfig): string {
   return cfg.mode === 'fixed' ? cfg.value : '';
 }
+
+// ── Alignment buttons ─────────────────────────────────────────────────────────
+
+interface AlignmentButtonsProps {
+  el: CanvasElement;
+  panelWidth: number;
+  panelHeight: number;
+  onUpdate: (partial: Partial<CanvasElement>) => void;
+}
+
+const ALIGNMENTS: Array<{ label: string; title: string; fn: (el: CanvasElement, pw: number, ph: number) => Partial<CanvasElement> }> = [
+  { label: '⇤', title: 'Align left edge to panel left', fn: (el) => ({ x: 0 }) },
+  { label: '↔', title: 'Center horizontally', fn: (el, pw) => ({ x: Math.round((pw - el.width) / 2) }) },
+  { label: '⇥', title: 'Align right edge to panel right', fn: (el, pw) => ({ x: pw - el.width }) },
+  { label: '⇡', title: 'Align top edge to panel top', fn: (el) => ({ y: 0 }) },
+  { label: '↕', title: 'Center vertically', fn: (el, _pw, ph) => ({ y: Math.round((ph - el.height) / 2) }) },
+  { label: '⇣', title: 'Align bottom edge to panel bottom', fn: (el, _pw, ph) => ({ y: ph - el.height }) },
+];
+
+const AlignmentButtons: React.FC<AlignmentButtonsProps> = ({ el, panelWidth, panelHeight, onUpdate }) => {
+  const hasDims = panelWidth > 0 && panelHeight > 0;
+  return (
+    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+      {ALIGNMENTS.map(({ label, title, fn }) => (
+        <Tooltip key={title} content={hasDims ? title : `${title} (open panel editor to enable)`}>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={!hasDims}
+            onClick={() => onUpdate(fn(el, panelWidth, panelHeight))}
+            style={{ fontFamily: 'monospace', minWidth: 32 }}
+          >
+            {label}
+          </Button>
+        </Tooltip>
+      ))}
+    </div>
+  );
+};
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const getStyles = (theme: GrafanaTheme2) => ({
   row: css`
@@ -124,15 +160,23 @@ const getStyles = (theme: GrafanaTheme2) => ({
   `,
 });
 
-export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[]>> = ({ value, onChange }) => {
+// ── Main editor ───────────────────────────────────────────────────────────────
+
+export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unknown, CanvasOptions>> = ({
+  value,
+  onChange,
+  context,
+}) => {
   const styles = useStyles2(getStyles);
   const elements = value ?? [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [newType, setNewType] = useState<ElementType>('rectangle');
 
-  const updateElement = (id: string, partial: Partial<CanvasElement>) => {
+  const panelWidth = context.options?._panelWidth ?? 0;
+  const panelHeight = context.options?._panelHeight ?? 0;
+
+  const updateElement = (id: string, partial: Partial<CanvasElement>) =>
     onChange(elements.map((el) => (el.id === id ? { ...el, ...partial } : el)));
-  };
 
   const removeElement = (id: string) => {
     onChange(elements.filter((el) => el.id !== id));
@@ -173,6 +217,16 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[]>> = ({
                 <Input value={el.name} onChange={(e) => updateElement(el.id, { name: e.currentTarget.value })} />
               </Field>
 
+              {/* ── Quick placement ── */}
+              <div className={styles.section}>Quick placement</div>
+              <AlignmentButtons
+                el={el}
+                panelWidth={panelWidth}
+                panelHeight={panelHeight}
+                onUpdate={(partial) => updateElement(el.id, partial)}
+              />
+
+              {/* ── Position & size ── */}
               <div className={styles.section}>Position &amp; Size</div>
               <div className={styles.twoCol}>
                 <Field label="X">
@@ -205,6 +259,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[]>> = ({
                 </Field>
               </div>
 
+              {/* ── Background ── */}
               <div className={styles.section}>Background</div>
               <Field label="Color">
                 <ColorPickerInput
@@ -213,6 +268,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[]>> = ({
                 />
               </Field>
 
+              {/* ── Border ── */}
               <div className={styles.section}>Border</div>
               <div className={styles.twoCol}>
                 <Field label="Width">
@@ -231,6 +287,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[]>> = ({
                 />
               </Field>
 
+              {/* ── Text ── */}
               {el.text && (
                 <>
                   <div className={styles.section}>Text</div>
@@ -301,6 +358,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[]>> = ({
                 </>
               )}
 
+              {/* ── Icon-specific ── */}
               {el.type === 'icon' && (
                 <>
                   <div className={styles.section}>Icon</div>
@@ -313,6 +371,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[]>> = ({
                 </>
               )}
 
+              {/* ── Server-specific ── */}
               {el.type === 'server' && (
                 <>
                   <div className={styles.section}>Server</div>
@@ -342,9 +401,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[]>> = ({
           onChange={(v) => setNewType(v.value!)}
           width={16}
         />
-        <Button size="sm" onClick={addElement}>
-          Add element
-        </Button>
+        <Button size="sm" onClick={addElement}>Add element</Button>
       </div>
     </div>
   );
