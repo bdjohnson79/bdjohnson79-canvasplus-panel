@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { StandardEditorProps } from '@grafana/data';
+import { GrafanaTheme2, StandardEditorProps } from '@grafana/data';
 import { Button, ColorPickerInput, Field, IconButton, Input, Select, TextArea, Tooltip, useStyles2 } from '@grafana/ui';
-import { GrafanaTheme2 } from '@grafana/data';
 import { css } from '@emotion/css';
 import {
   CanvasElement,
@@ -311,7 +310,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
 
   const removeElement = (id: string) => {
     onChange(elements.filter((el) => el.id !== id));
-    if (expandedId === id) setExpandedId(null);
+    if (expandedId === id) {setExpandedId(null);}
   };
 
   const addElement = () => {

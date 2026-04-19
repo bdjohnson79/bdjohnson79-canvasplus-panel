@@ -56,7 +56,7 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
-      if (!editMode) return;
+      if (!editMode) {return;}
       e.stopPropagation();
       ctx?.setSelectedId(element.id);
     },
@@ -159,7 +159,7 @@ export const CanvasContainer: React.FC<Props> = ({
 
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
-      if (!options.panZoom) return;
+      if (!options.panZoom) {return;}
       e.preventDefault();
       setZoom((z) => Math.min(4, Math.max(0.25, z - e.deltaY * 0.001)));
     },
@@ -168,7 +168,7 @@ export const CanvasContainer: React.FC<Props> = ({
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (!options.panZoom || e.button !== 1) return;
+      if (!options.panZoom || e.button !== 1) {return;}
       isPanning.current = true;
       panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
     },
@@ -177,7 +177,7 @@ export const CanvasContainer: React.FC<Props> = ({
 
   const onMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!isPanning.current) return;
+      if (!isPanning.current) {return;}
       setPan({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y });
     },
     []

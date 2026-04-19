@@ -47,7 +47,7 @@ export const DragLayer: React.FC<Props> = ({
   } | null>(null);
 
   const canvasOffset = useCallback(() => {
-    if (!canvasRef.current) return { x: 0, y: 0 };
+    if (!canvasRef.current) {return { x: 0, y: 0 };}
     const rect = canvasRef.current.getBoundingClientRect();
     return { x: rect.left, y: rect.top };
   }, [canvasRef]);
@@ -74,7 +74,7 @@ export const DragLayer: React.FC<Props> = ({
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!dragState.current) return;
+      if (!dragState.current) {return;}
       const offset = canvasOffset();
       const cx = e.clientX - offset.x;
       const cy = e.clientY - offset.y;

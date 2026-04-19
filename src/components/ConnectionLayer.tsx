@@ -34,8 +34,8 @@ function anchorPixel(rect: PixelRect, anchor: AnchorPoint): { x: number; y: numb
 }
 
 function dashArray(lineStyle: string, width: number): string | undefined {
-  if (lineStyle === 'dashed') return `${width * 4},${width * 2}`;
-  if (lineStyle === 'dotted') return `${width},${width * 2}`;
+  if (lineStyle === 'dashed') {return `${width * 4},${width * 2}`;}
+  if (lineStyle === 'dotted') {return `${width},${width * 2}`;}
   return undefined;
 }
 
@@ -92,7 +92,7 @@ export const ConnectionLayer: React.FC<Props> = ({
       {connections.map((conn) => {
         const srcRect = rectMap.get(conn.sourceId);
         const tgtRect = rectMap.get(conn.targetId);
-        if (!srcRect || !tgtRect) return null;
+        if (!srcRect || !tgtRect) {return null;}
 
         const s = anchorPixel(srcRect, conn.sourceAnchor);
         const t = anchorPixel(tgtRect, conn.targetAnchor);

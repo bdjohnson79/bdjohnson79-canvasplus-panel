@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { StandardEditorProps } from '@grafana/data';
+import { GrafanaTheme2, StandardEditorProps } from '@grafana/data';
 import { Button, ColorPickerInput, Field, IconButton, Input, Select, useStyles2 } from '@grafana/ui';
-import { GrafanaTheme2 } from '@grafana/data';
 import { css } from '@emotion/css';
 import { AnchorPoint, ArrowDirection, CanvasConnection, LineStyle } from '../../types';
 import { v4 as uuidv4 } from '../../utils/uuid';
@@ -91,7 +90,7 @@ export const ConnectionsEditor: React.FC<StandardEditorProps<CanvasConnection[]>
 
   const remove = (id: string) => {
     onChange(connections.filter((c) => c.id !== id));
-    if (expandedId === id) setExpandedId(null);
+    if (expandedId === id) {setExpandedId(null);}
   };
 
   const add = () => {
