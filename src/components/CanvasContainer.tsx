@@ -6,8 +6,6 @@ import { ElementRegistry } from './elements';
 import { useDataBinding } from './hooks/useDataBinding';
 import { ConnectionLayer } from './ConnectionLayer';
 import { DragLayer } from './editor/DragLayer';
-import { AddElementToolbar } from './editor/AddElementToolbar';
-import { ElementEditor } from './editor/ElementEditor';
 
 // ── Edit context ──────────────────────────────────────────────────────────────
 
@@ -15,10 +13,6 @@ interface EditContextValue {
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
   updateElement: (id: string, partial: Partial<CanvasElement>) => void;
-  addElement: (el: CanvasElement) => void;
-  removeElement: (id: string) => void;
-  addConnection: (conn: CanvasConnection) => void;
-  removeConnection: (id: string) => void;
   updateConnection: (id: string, partial: Partial<CanvasConnection>) => void;
 }
 
@@ -125,50 +119,24 @@ export const CanvasContainer: React.FC<Props> = ({
 
   // ── option helpers ──────────────────────────────────────────────────────────
 
-  const setElements = useCallback(
-    (elements: CanvasElement[]) => onOptionsChange({ ...options, elements }),
-    [options, onOptionsChange]
-  );
-
-  const setConnections = useCallback(
-    (connections: CanvasConnection[]) => onOptionsChange({ ...options, connections }),
-    [options, onOptionsChange]
-  );
-
   const updateElement = useCallback(
     (id: string, partial: Partial<CanvasElement>) => {
-      setElements(options.elements.map((el) => (el.id === id ? { ...el, ...partial } : el)));
+      onOptionsChange({
+        ...options,
+        elements: options.elements.map((el) => (el.id === id ? { ...el, ...partial } : el)),
+      });
     },
-    [options.elements, setElements]
-  );
-
-  const addElement = useCallback(
-    (el: CanvasElement) => setElements([...options.elements, el]),
-    [options.elements, setElements]
-  );
-
-  const removeElement = useCallback(
-    (id: string) => {
-      setElements(options.elements.filter((el) => el.id !== id));
-      if (selectedId === id) setSelectedId(null);
-    },
-    [options.elements, setElements, selectedId]
-  );
-
-  const addConnection = useCallback(
-    (conn: CanvasConnection) => setConnections([...options.connections, conn]),
-    [options.connections, setConnections]
-  );
-
-  const removeConnection = useCallback(
-    (id: string) => setConnections(options.connections.filter((c) => c.id !== id)),
-    [options.connections, setConnections]
+    [options, onOptionsChange]
   );
 
   const updateConnection = useCallback(
-    (id: string, partial: Partial<CanvasConnection>) =>
-      setConnections(options.connections.map((c) => (c.id === id ? { ...c, ...partial } : c))),
-    [options.connections, setConnections]
+    (id: string, partial: Partial<CanvasConnection>) => {
+      onOptionsChange({
+        ...options,
+        connections: options.connections.map((c) => (c.id === id ? { ...c, ...partial } : c)),
+      });
+    },
+    [options, onOptionsChange]
   );
 
   // ── context value ───────────────────────────────────────────────────────────
@@ -177,10 +145,6 @@ export const CanvasContainer: React.FC<Props> = ({
     selectedId,
     setSelectedId,
     updateElement,
-    addElement,
-    removeElement,
-    addConnection,
-    removeConnection,
     updateConnection,
   };
 
@@ -216,102 +180,71 @@ export const CanvasContainer: React.FC<Props> = ({
     isPanning.current = false;
   }, []);
 
-  // ── sorted elements ─────────────────────────────────────────────────────────
+  // ── render ──────────────────────────────────────────────────────────────────
 
   const sortedElements = [...options.elements].sort((a, b) => a.zIndex - b.zIndex);
-  const nextZIndex = options.elements.length > 0 ? Math.max(...options.elements.map((e) => e.zIndex)) + 1 : 1;
-  const selectedElement = options.elements.find((el) => el.id === selectedId) ?? null;
-
-  const toolbarHeight = options.inlineEditing ? 40 : 0;
-  const editorWidth = options.inlineEditing && selectedId ? 240 : 0;
-  const canvasW = width - editorWidth;
-  const canvasH = height - toolbarHeight;
 
   return (
     <CanvasEditContext.Provider value={editCtx}>
-      <div style={{ width, height, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
-        {options.inlineEditing && (
-          <AddElementToolbar
-            canvasWidth={canvasW}
-            canvasHeight={canvasH}
-            nextZIndex={nextZIndex}
-            onAdd={addElement}
-          />
-        )}
-
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
-          {/* canvas area */}
-          <div
-            ref={canvasRef}
-            style={{
-              position: 'relative',
-              width: canvasW,
-              height: canvasH,
-              overflow: options.panZoom ? 'hidden' : 'hidden',
-              background: options.background.color || 'transparent',
-              backgroundImage: options.background.image ? `url(${options.background.image})` : undefined,
-              backgroundSize: 'cover',
-              flexShrink: 0,
-            }}
-            onClick={() => {
-              if (options.inlineEditing) {
-                setSelectedId(null);
-                setSelectedConnectionId(null);
-              }
-            }}
-            onWheel={onWheel}
-            onMouseDown={onMouseDown}
-            onMouseMove={onMouseMove}
-            onMouseUp={onMouseUp}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                transform: options.panZoom
-                  ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
-                  : undefined,
-                transformOrigin: '0 0',
-              }}
-            >
-              {sortedElements.map((el) => (
-                <ElementWrapper
-                  key={el.id}
-                  element={el}
-                  data={data}
-                  fieldConfig={fieldConfig}
-                  theme={theme}
-                  editMode={options.inlineEditing}
-                  isSelected={el.id === selectedId}
-                  canvasRef={canvasRef}
-                />
-              ))}
-
-              <ConnectionLayer
-                connections={options.connections}
-                elements={options.elements}
-                width={canvasW}
-                height={canvasH}
-                series={data.series}
-                theme={theme}
-                editMode={options.inlineEditing}
-                selectedConnectionId={selectedConnectionId ?? undefined}
-                onSelectConnection={setSelectedConnectionId}
-              />
-            </div>
-          </div>
-
-          {/* element editor sidebar */}
-          {options.inlineEditing && selectedElement && (
-            <ElementEditor
-              element={selectedElement}
-              onChange={(partial) => updateElement(selectedElement.id, partial)}
-              onDelete={() => removeElement(selectedElement.id)}
+      <div
+        ref={canvasRef}
+        style={{
+          position: 'relative',
+          width,
+          height,
+          overflow: 'hidden',
+          background: options.background.color || 'transparent',
+          backgroundImage: options.background.image ? `url(${options.background.image})` : undefined,
+          backgroundSize: 'cover',
+        }}
+        onClick={() => {
+          if (options.inlineEditing) {
+            setSelectedId(null);
+            setSelectedConnectionId(null);
+          }
+        }}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            transform: options.panZoom
+              ? `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
+              : undefined,
+            transformOrigin: '0 0',
+          }}
+        >
+          {sortedElements.map((el) => (
+            <ElementWrapper
+              key={el.id}
+              element={el}
+              data={data}
+              fieldConfig={fieldConfig}
+              theme={theme}
+              editMode={options.inlineEditing}
+              isSelected={el.id === selectedId}
+              canvasRef={canvasRef}
             />
-          )}
+          ))}
+
+          <ConnectionLayer
+            connections={options.connections}
+            elements={options.elements}
+            width={width}
+            height={height}
+            series={data.series}
+            theme={theme}
+            editMode={options.inlineEditing}
+            selectedConnectionId={selectedConnectionId ?? undefined}
+            onSelectConnection={setSelectedConnectionId}
+          />
         </div>
       </div>
     </CanvasEditContext.Provider>
