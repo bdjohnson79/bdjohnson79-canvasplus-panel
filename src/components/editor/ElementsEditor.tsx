@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { StandardEditorProps } from '@grafana/data';
-import { Button, ColorPickerInput, Field, IconButton, Input, Select, Tooltip, useStyles2 } from '@grafana/ui';
+import { Button, ColorPickerInput, Field, IconButton, Input, Select, TextArea, Tooltip, useStyles2 } from '@grafana/ui';
 import { GrafanaTheme2 } from '@grafana/data';
 import { css } from '@emotion/css';
 import {
@@ -27,6 +27,7 @@ const ELEMENT_TYPES: Array<{ label: string; value: ElementType }> = [
   { label: 'Cloud', value: 'cloud' },
   { label: 'Triangle', value: 'triangle' },
   { label: 'Parallelogram', value: 'parallelogram' },
+  { label: 'Image', value: 'image' },
 ];
 
 // ── Constraint options ────────────────────────────────────────────────────────
@@ -90,6 +91,15 @@ function defaultElement(type: ElementType, zIndex: number): CanvasElement {
     base.serverVariant = 'single';
     base.statusColor = { mode: 'fixed', value: '#73bf69' };
     base.placement = defaultPlacement(80, 100);
+  }
+  if (type === 'image') {
+    base.imageSource = 'inline';
+    base.imageFormat = 'png';
+    base.imageFit = 'contain';
+    base.background = { color: { mode: 'fixed', value: 'transparent' } };
+    base.border = { width: 0, color: { mode: 'fixed', value: 'transparent' }, radius: 0 };
+    base.text = undefined;
+    base.placement = defaultPlacement(120, 80);
   }
   return base;
 }
@@ -534,6 +544,93 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
                       ]}
                       value={el.serverVariant ?? 'single'}
                       onChange={(v) => updateElement(el.id, { serverVariant: v.value! })}
+                    />
+                  </Field>
+                </>
+              )}
+
+              {/* ── Image ── */}
+              {el.type === 'image' && (
+                <>
+                  <div className={styles.section}>Image</div>
+                  <Field label="Source">
+                    <Select
+                      options={[
+                        { label: 'Inline (paste data)', value: 'inline' as const },
+                        { label: 'From query field', value: 'field' as const },
+                      ]}
+                      value={el.imageSource ?? 'inline'}
+                      onChange={(v) => updateElement(el.id, { imageSource: v.value! })}
+                    />
+                  </Field>
+
+                  {(el.imageSource ?? 'inline') === 'inline' && (
+                    <>
+                      <Field label="Format">
+                        <Select
+                          options={[
+                            { label: 'SVG (text/xml)', value: 'svg+xml' as const },
+                            { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
+                            { label: 'PNG (base64)', value: 'png' as const },
+                            { label: 'JPEG (base64)', value: 'jpeg' as const },
+                            { label: 'GIF (base64)', value: 'gif' as const },
+                            { label: 'WebP (base64)', value: 'webp' as const },
+                          ]}
+                          value={el.imageFormat ?? 'png'}
+                          onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
+                        />
+                      </Field>
+                      <Field
+                        label="Image data"
+                        description={
+                          (el.imageFormat ?? 'png') === 'svg+xml'
+                            ? 'Paste SVG markup'
+                            : 'Paste base64 encoded image data'
+                        }
+                      >
+                        <TextArea
+                          value={el.imageData ?? ''}
+                          rows={4}
+                          onChange={(e) => updateElement(el.id, { imageData: e.currentTarget.value })}
+                        />
+                      </Field>
+                    </>
+                  )}
+
+                  {el.imageSource === 'field' && (
+                    <>
+                      <Field label="Format" description="MIME type when field value is raw base64 (not a data URL)">
+                        <Select
+                          options={[
+                            { label: 'PNG', value: 'png' as const },
+                            { label: 'JPEG', value: 'jpeg' as const },
+                            { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
+                            { label: 'GIF', value: 'gif' as const },
+                            { label: 'WebP', value: 'webp' as const },
+                          ]}
+                          value={el.imageFormat ?? 'png'}
+                          onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
+                        />
+                      </Field>
+                      <Field label="Field name" description="Query field containing base64 data or a data URL">
+                        <Input
+                          value={el.imageField ?? ''}
+                          onChange={(e) => updateElement(el.id, { imageField: e.currentTarget.value })}
+                        />
+                      </Field>
+                    </>
+                  )}
+
+                  <Field label="Fit">
+                    <Select
+                      options={[
+                        { label: 'Contain', value: 'contain' as const },
+                        { label: 'Cover', value: 'cover' as const },
+                        { label: 'Fill', value: 'fill' as const },
+                        { label: 'None', value: 'none' as const },
+                      ]}
+                      value={el.imageFit ?? 'contain'}
+                      onChange={(v) => updateElement(el.id, { imageFit: v.value! })}
                     />
                   </Field>
                 </>

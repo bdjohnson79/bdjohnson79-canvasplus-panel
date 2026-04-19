@@ -6,7 +6,8 @@ export type ElementType =
   | 'server'
   | 'cloud'
   | 'triangle'
-  | 'parallelogram';
+  | 'parallelogram'
+  | 'image';
 
 export type HorizontalConstraint = 'left' | 'right' | 'center' | 'leftright';
 export type VerticalConstraint = 'top' | 'bottom' | 'center' | 'topbottom';
@@ -68,6 +69,11 @@ export interface CanvasElement {
   iconColor?: ColorConfig;
   serverVariant?: 'single' | 'stack' | 'database' | 'terminal';
   statusColor?: ColorConfig;
+  imageSource?: 'inline' | 'field';
+  imageData?: string;
+  imageFormat?: 'svg+xml' | 'svg+xml;base64' | 'png' | 'jpeg' | 'gif' | 'webp';
+  imageField?: string;
+  imageFit?: 'contain' | 'cover' | 'fill' | 'none';
   zIndex: number;
 }
 

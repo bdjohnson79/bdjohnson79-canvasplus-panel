@@ -1,5 +1,5 @@
 import { DataFrame, Field, FieldType, GrafanaTheme2, ThresholdsMode } from '@grafana/data';
-import { ColorConfig } from '../types';
+import { CanvasElement, ColorConfig } from '../types';
 
 function getLastValue(field: Field): number | string | null {
   const vals = field.values;
@@ -88,4 +88,40 @@ export function resolveText(cfg: { mode: 'fixed'; value: string } | { mode: 'fie
   }
   const val = getLastValue(field);
   return val !== null ? String(val) : '';
+}
+
+export function resolveImageSrc(element: CanvasElement, series: DataFrame[]): string {
+  if (element.type !== 'image') {
+    return '';
+  }
+
+  const fmt = element.imageFormat ?? 'png';
+
+  if (element.imageSource === 'field' && element.imageField) {
+    const field = findField(series, element.imageField);
+    if (!field) {
+      return '';
+    }
+    const val = getLastValue(field);
+    if (val === null) {
+      return '';
+    }
+    const str = String(val);
+    if (str.startsWith('data:')) {
+      return str;
+    }
+    return `data:image/${fmt};base64,${str}`;
+  }
+
+  if (element.imageData) {
+    if (fmt === 'svg+xml') {
+      return `data:image/svg+xml,${encodeURIComponent(element.imageData)}`;
+    }
+    if (fmt === 'svg+xml;base64') {
+      return `data:image/svg+xml;base64,${element.imageData}`;
+    }
+    return `data:image/${fmt};base64,${element.imageData}`;
+  }
+
+  return '';
 }
