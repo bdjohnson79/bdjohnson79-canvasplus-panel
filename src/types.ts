@@ -8,6 +8,24 @@ export type ElementType =
   | 'triangle'
   | 'parallelogram';
 
+export type HorizontalConstraint = 'left' | 'right' | 'center' | 'leftright';
+export type VerticalConstraint = 'top' | 'bottom' | 'center' | 'topbottom';
+
+export interface ElementConstraint {
+  horizontal: HorizontalConstraint;
+  vertical: VerticalConstraint;
+}
+
+export interface Placement {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+  rotation: number;
+}
+
 export type ColorConfig =
   | { mode: 'fixed'; value: string }
   | { mode: 'field'; field: string }
@@ -41,11 +59,8 @@ export interface CanvasElement {
   id: string;
   type: ElementType;
   name: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation: number;
+  placement: Placement;
+  constraint: ElementConstraint;
   background: BackgroundStyle;
   border: BorderStyle;
   text?: TextStyle & { content: TextConfig };
@@ -81,7 +96,12 @@ export interface CanvasOptions {
   background: { color: string; image?: string };
   inlineEditing: boolean;
   panZoom: boolean;
-  /** Written by the panel on mount/resize so sidebar editors can use panel dimensions. */
-  _panelWidth?: number;
-  _panelHeight?: number;
+}
+
+/** Resolved absolute pixel rect — used internally for rendering, drag, and connections. */
+export interface PixelRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }

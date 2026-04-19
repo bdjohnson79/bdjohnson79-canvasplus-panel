@@ -1,8 +1,12 @@
 import React, { useRef, useCallback } from 'react';
-import { CanvasElement } from '../../types';
+import { CanvasElement, PixelRect } from '../../types';
+import { pixelToPlacement } from '../../utils/placement';
 
 interface Props {
   element: CanvasElement;
+  resolvedPos: PixelRect;
+  panelWidth: number;
+  panelHeight: number;
   canvasRef: React.RefObject<HTMLDivElement>;
   onUpdate: (partial: Partial<CanvasElement>) => void;
   onSelect: () => void;
@@ -14,16 +18,24 @@ const HANDLE_SIZE = 8;
 
 const HANDLES: Array<{ id: Handle; cursor: string; top: string; left: string; transform: string }> = [
   { id: 'nw', cursor: 'nw-resize', top: '0', left: '0', transform: 'translate(-50%,-50%)' },
-  { id: 'n', cursor: 'n-resize', top: '0', left: '50%', transform: 'translate(-50%,-50%)' },
+  { id: 'n',  cursor: 'n-resize',  top: '0', left: '50%', transform: 'translate(-50%,-50%)' },
   { id: 'ne', cursor: 'ne-resize', top: '0', left: '100%', transform: 'translate(-50%,-50%)' },
-  { id: 'e', cursor: 'e-resize', top: '50%', left: '100%', transform: 'translate(-50%,-50%)' },
+  { id: 'e',  cursor: 'e-resize',  top: '50%', left: '100%', transform: 'translate(-50%,-50%)' },
   { id: 'se', cursor: 'se-resize', top: '100%', left: '100%', transform: 'translate(-50%,-50%)' },
-  { id: 's', cursor: 's-resize', top: '100%', left: '50%', transform: 'translate(-50%,-50%)' },
+  { id: 's',  cursor: 's-resize',  top: '100%', left: '50%', transform: 'translate(-50%,-50%)' },
   { id: 'sw', cursor: 'sw-resize', top: '100%', left: '0', transform: 'translate(-50%,-50%)' },
-  { id: 'w', cursor: 'w-resize', top: '50%', left: '0', transform: 'translate(-50%,-50%)' },
+  { id: 'w',  cursor: 'w-resize',  top: '50%', left: '0', transform: 'translate(-50%,-50%)' },
 ];
 
-export const DragLayer: React.FC<Props> = ({ element, canvasRef, onUpdate, onSelect }) => {
+export const DragLayer: React.FC<Props> = ({
+  element,
+  resolvedPos,
+  panelWidth,
+  panelHeight,
+  canvasRef,
+  onUpdate,
+  onSelect,
+}) => {
   const dragState = useRef<{
     handle: Handle;
     startX: number;
@@ -50,14 +62,14 @@ export const DragLayer: React.FC<Props> = ({ element, canvasRef, onUpdate, onSel
         handle,
         startX: e.clientX - offset.x,
         startY: e.clientY - offset.y,
-        origX: element.x,
-        origY: element.y,
-        origW: element.width,
-        origH: element.height,
+        origX: resolvedPos.x,
+        origY: resolvedPos.y,
+        origW: resolvedPos.width,
+        origH: resolvedPos.height,
       };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [element, onSelect, canvasOffset]
+    [resolvedPos, onSelect, canvasOffset]
   );
 
   const onPointerMove = useCallback(
@@ -83,9 +95,10 @@ export const DragLayer: React.FC<Props> = ({ element, canvasRef, onUpdate, onSel
         if (handle.includes('n')) { y = origY + dy; h = Math.max(MIN, origH - dy); }
       }
 
-      onUpdate({ x, y, width: w, height: h });
+      const newPlacement = pixelToPlacement(x, y, w, h, element.constraint, panelWidth, panelHeight);
+      onUpdate({ placement: { ...element.placement, ...newPlacement } });
     },
-    [onUpdate, canvasOffset]
+    [onUpdate, canvasOffset, element.constraint, element.placement, panelWidth, panelHeight]
   );
 
   const onPointerUp = useCallback(() => {
@@ -96,10 +109,10 @@ export const DragLayer: React.FC<Props> = ({ element, canvasRef, onUpdate, onSel
     <div
       style={{
         position: 'absolute',
-        left: element.x - 1,
-        top: element.y - 1,
-        width: element.width + 2,
-        height: element.height + 2,
+        left: resolvedPos.x - 1,
+        top: resolvedPos.y - 1,
+        width: resolvedPos.width + 2,
+        height: resolvedPos.height + 2,
         boxSizing: 'border-box',
         border: '1px solid #4e9fff',
         pointerEvents: 'none',
@@ -108,18 +121,12 @@ export const DragLayer: React.FC<Props> = ({ element, canvasRef, onUpdate, onSel
     >
       {/* move overlay */}
       <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          cursor: 'move',
-          pointerEvents: 'all',
-        }}
+        style={{ position: 'absolute', inset: 0, cursor: 'move', pointerEvents: 'all' }}
         onPointerDown={(e) => onPointerDown(e, 'move')}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       />
 
-      {/* resize handles */}
       {HANDLES.map(({ id, cursor, top, left, transform }) => (
         <div
           key={id}

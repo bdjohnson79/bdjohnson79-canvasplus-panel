@@ -1,7 +1,8 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import { PanelData, GrafanaTheme2, FieldConfigSource } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
-import { CanvasElement, CanvasConnection, CanvasOptions } from '../types';
+import { CanvasElement, CanvasConnection, CanvasOptions, PixelRect } from '../types';
+import { resolvePixelRect } from '../utils/placement';
 import { ElementRegistry } from './elements';
 import { useDataBinding } from './hooks/useDataBinding';
 import { ConnectionLayer } from './ConnectionLayer';
@@ -26,21 +27,27 @@ export function useCanvasEdit() {
 
 interface ElementWrapperProps {
   element: CanvasElement;
+  rect: PixelRect;
   data: PanelData;
   fieldConfig: FieldConfigSource;
   theme: GrafanaTheme2;
   editMode: boolean;
   isSelected: boolean;
+  panelWidth: number;
+  panelHeight: number;
   canvasRef: React.RefObject<HTMLDivElement>;
 }
 
 const ElementWrapper: React.FC<ElementWrapperProps> = ({
   element,
+  rect,
   data,
   fieldConfig,
   theme,
   editMode,
   isSelected,
+  panelWidth,
+  panelHeight,
   canvasRef,
 }) => {
   const ctx = useCanvasEdit();
@@ -61,11 +68,11 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
       <div
         style={{
           position: 'absolute',
-          left: element.x,
-          top: element.y,
-          width: element.width,
-          height: element.height,
-          transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
+          left: rect.x,
+          top: rect.y,
+          width: rect.width,
+          height: rect.height,
+          transform: element.placement.rotation ? `rotate(${element.placement.rotation}deg)` : undefined,
           zIndex: element.zIndex,
           boxSizing: 'border-box',
           cursor: editMode ? 'pointer' : 'default',
@@ -78,6 +85,9 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
       {editMode && isSelected && ctx && (
         <DragLayer
           element={element}
+          resolvedPos={rect}
+          panelWidth={panelWidth}
+          panelHeight={panelHeight}
           canvasRef={canvasRef}
           onUpdate={(partial) => ctx.updateElement(element.id, partial)}
           onSelect={() => ctx.setSelectedId(element.id)}
@@ -111,7 +121,6 @@ export const CanvasContainer: React.FC<Props> = ({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
 
-  // pan/zoom state
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const isPanning = useRef(false);
@@ -138,8 +147,6 @@ export const CanvasContainer: React.FC<Props> = ({
     },
     [options, onOptionsChange]
   );
-
-  // ── context value ───────────────────────────────────────────────────────────
 
   const editCtx: EditContextValue = {
     selectedId,
@@ -180,9 +187,14 @@ export const CanvasContainer: React.FC<Props> = ({
     isPanning.current = false;
   }, []);
 
-  // ── render ──────────────────────────────────────────────────────────────────
+  // ── resolve pixel rects for all elements ────────────────────────────────────
 
   const sortedElements = [...options.elements].sort((a, b) => a.zIndex - b.zIndex);
+
+  const rectMap = new Map<string, PixelRect>();
+  for (const el of options.elements) {
+    rectMap.set(el.id, resolvePixelRect(el.placement, el.constraint, width, height));
+  }
 
   return (
     <CanvasEditContext.Provider value={editCtx}>
@@ -221,22 +233,29 @@ export const CanvasContainer: React.FC<Props> = ({
             transformOrigin: '0 0',
           }}
         >
-          {sortedElements.map((el) => (
-            <ElementWrapper
-              key={el.id}
-              element={el}
-              data={data}
-              fieldConfig={fieldConfig}
-              theme={theme}
-              editMode={options.inlineEditing}
-              isSelected={el.id === selectedId}
-              canvasRef={canvasRef}
-            />
-          ))}
+          {sortedElements.map((el) => {
+            const rect = rectMap.get(el.id)!;
+            return (
+              <ElementWrapper
+                key={el.id}
+                element={el}
+                rect={rect}
+                data={data}
+                fieldConfig={fieldConfig}
+                theme={theme}
+                editMode={options.inlineEditing}
+                isSelected={el.id === selectedId}
+                panelWidth={width}
+                panelHeight={height}
+                canvasRef={canvasRef}
+              />
+            );
+          })}
 
           <ConnectionLayer
             connections={options.connections}
             elements={options.elements}
+            rectMap={rectMap}
             width={width}
             height={height}
             series={data.series}

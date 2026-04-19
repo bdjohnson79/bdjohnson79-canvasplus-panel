@@ -1,16 +1,16 @@
 import { CSSProperties } from 'react';
-import { CanvasElement } from '../../types';
+import { CanvasElement, PixelRect } from '../../types';
 import { ResolvedStyle } from '../hooks/useDataBinding';
 
-export function elementWrapperStyle(element: CanvasElement): CSSProperties {
+export function elementWrapperStyle(rect: PixelRect, rotation: number, zIndex: number): CSSProperties {
   return {
     position: 'absolute',
-    left: element.x,
-    top: element.y,
-    width: element.width,
-    height: element.height,
-    transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
-    zIndex: element.zIndex,
+    left: rect.x,
+    top: rect.y,
+    width: rect.width,
+    height: rect.height,
+    transform: rotation ? `rotate(${rotation}deg)` : undefined,
+    zIndex,
     boxSizing: 'border-box',
   };
 }

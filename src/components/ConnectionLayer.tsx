@@ -1,12 +1,13 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { DataFrame, GrafanaTheme2 } from '@grafana/data';
-import { CanvasConnection, CanvasElement, AnchorPoint } from '../types';
+import { CanvasConnection, CanvasElement, AnchorPoint, PixelRect } from '../types';
 import { resolveColor } from '../utils/colorUtils';
 import { css, keyframes } from '@emotion/css';
 
 interface Props {
   connections: CanvasConnection[];
   elements: CanvasElement[];
+  rectMap: Map<string, PixelRect>;
   width: number;
   height: number;
   series: DataFrame[];
@@ -16,19 +17,19 @@ interface Props {
   onSelectConnection?: (id: string) => void;
 }
 
-function anchorPixel(el: CanvasElement, anchor: AnchorPoint): { x: number; y: number } {
-  const cx = el.x + el.width / 2;
-  const cy = el.y + el.height / 2;
+function anchorPixel(rect: PixelRect, anchor: AnchorPoint): { x: number; y: number } {
+  const cx = rect.x + rect.width / 2;
+  const cy = rect.y + rect.height / 2;
   switch (anchor) {
-    case 'n': return { x: cx, y: el.y };
-    case 'ne': return { x: el.x + el.width, y: el.y };
-    case 'e': return { x: el.x + el.width, y: cy };
-    case 'se': return { x: el.x + el.width, y: el.y + el.height };
-    case 's': return { x: cx, y: el.y + el.height };
-    case 'sw': return { x: el.x, y: el.y + el.height };
-    case 'w': return { x: el.x, y: cy };
-    case 'nw': return { x: el.x, y: el.y };
-    case 'c': return { x: cx, y: cy };
+    case 'n':  return { x: cx, y: rect.y };
+    case 'ne': return { x: rect.x + rect.width, y: rect.y };
+    case 'e':  return { x: rect.x + rect.width, y: cy };
+    case 'se': return { x: rect.x + rect.width, y: rect.y + rect.height };
+    case 's':  return { x: cx, y: rect.y + rect.height };
+    case 'sw': return { x: rect.x, y: rect.y + rect.height };
+    case 'w':  return { x: rect.x, y: cy };
+    case 'nw': return { x: rect.x, y: rect.y };
+    case 'c':  return { x: cx, y: cy };
   }
 }
 
@@ -45,7 +46,7 @@ const marchingAnts = keyframes`
 
 export const ConnectionLayer: React.FC<Props> = ({
   connections,
-  elements,
+  rectMap,
   width,
   height,
   series,
@@ -54,14 +55,6 @@ export const ConnectionLayer: React.FC<Props> = ({
   selectedConnectionId,
   onSelectConnection,
 }) => {
-  const elMap = useMemo(() => {
-    const m: Record<string, CanvasElement> = {};
-    for (const el of elements) {
-      m[el.id] = el;
-    }
-    return m;
-  }, [elements]);
-
   if (connections.length === 0) {
     return null;
   }
@@ -78,30 +71,16 @@ export const ConnectionLayer: React.FC<Props> = ({
           const markers: React.ReactNode[] = [];
           if (conn.arrowDirection === 'forward' || conn.arrowDirection === 'both') {
             markers.push(
-              <marker
-                key={`${conn.id}-fwd`}
-                id={`arrow-fwd-${conn.id}`}
-                markerWidth="8"
-                markerHeight="8"
-                refX="6"
-                refY="3"
-                orient="auto"
-              >
+              <marker key={`${conn.id}-fwd`} id={`arrow-fwd-${conn.id}`}
+                markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
                 <path d="M0,0 L0,6 L8,3 z" fill={color} />
               </marker>
             );
           }
           if (conn.arrowDirection === 'backward' || conn.arrowDirection === 'both') {
             markers.push(
-              <marker
-                key={`${conn.id}-bwd`}
-                id={`arrow-bwd-${conn.id}`}
-                markerWidth="8"
-                markerHeight="8"
-                refX="2"
-                refY="3"
-                orient="auto-start-reverse"
-              >
+              <marker key={`${conn.id}-bwd`} id={`arrow-bwd-${conn.id}`}
+                markerWidth="8" markerHeight="8" refX="2" refY="3" orient="auto-start-reverse">
                 <path d="M8,0 L8,6 L0,3 z" fill={color} />
               </marker>
             );
@@ -111,14 +90,12 @@ export const ConnectionLayer: React.FC<Props> = ({
       </defs>
 
       {connections.map((conn) => {
-        const src = elMap[conn.sourceId];
-        const tgt = elMap[conn.targetId];
-        if (!src || !tgt) {
-          return null;
-        }
+        const srcRect = rectMap.get(conn.sourceId);
+        const tgtRect = rectMap.get(conn.targetId);
+        if (!srcRect || !tgtRect) return null;
 
-        const s = anchorPixel(src, conn.sourceAnchor);
-        const t = anchorPixel(tgt, conn.targetAnchor);
+        const s = anchorPixel(srcRect, conn.sourceAnchor);
+        const t = anchorPixel(tgtRect, conn.targetAnchor);
         const color = resolveColor(conn.color, series, theme, theme.colors.text.secondary);
         const da = conn.animated
           ? `${conn.width * 4},${conn.width * 2}`
@@ -136,9 +113,7 @@ export const ConnectionLayer: React.FC<Props> = ({
         }
 
         const animClass = conn.animated
-          ? css`
-              animation: ${marchingAnts} 0.6s linear infinite;
-            `
+          ? css`animation: ${marchingAnts} 0.6s linear infinite;`
           : undefined;
 
         return (
@@ -151,13 +126,11 @@ export const ConnectionLayer: React.FC<Props> = ({
             fill="none"
             markerEnd={
               conn.arrowDirection === 'forward' || conn.arrowDirection === 'both'
-                ? `url(#arrow-fwd-${conn.id})`
-                : undefined
+                ? `url(#arrow-fwd-${conn.id})` : undefined
             }
             markerStart={
               conn.arrowDirection === 'backward' || conn.arrowDirection === 'both'
-                ? `url(#arrow-bwd-${conn.id})`
-                : undefined
+                ? `url(#arrow-bwd-${conn.id})` : undefined
             }
             className={animClass}
             style={{ cursor: editMode ? 'pointer' : 'default' }}

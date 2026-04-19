@@ -4,7 +4,7 @@ import { ElementProps } from './index';
 
 export const IconElement: React.FC<ElementProps> = ({ element, resolved }) => {
   const iconName = (element.iconName as any) || 'question-circle';
-  const size = Math.min(element.width, element.height);
+  const size = Math.min(element.placement.width, element.placement.height);
 
   return (
     <div

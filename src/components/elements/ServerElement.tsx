@@ -86,8 +86,8 @@ export const ServerElement: React.FC<ElementProps> = ({ element, resolved }) => 
       <ServerSVG
         variant={variant}
         statusColor={resolved.statusColor}
-        width={element.width}
-        height={element.text ? element.height - 24 : element.height}
+        width={element.placement.width}
+        height={element.text ? element.placement.height - 24 : element.placement.height}
       />
       {element.text && <span style={textStyle(element, resolved)}>{resolved.text}</span>}
     </div>

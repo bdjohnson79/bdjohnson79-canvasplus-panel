@@ -3,7 +3,17 @@ import { StandardEditorProps } from '@grafana/data';
 import { Button, ColorPickerInput, Field, IconButton, Input, Select, Tooltip, useStyles2 } from '@grafana/ui';
 import { GrafanaTheme2 } from '@grafana/data';
 import { css } from '@emotion/css';
-import { CanvasElement, CanvasOptions, ColorConfig, ElementType, TextConfig } from '../../types';
+import {
+  CanvasElement,
+  CanvasOptions,
+  ColorConfig,
+  ElementConstraint,
+  ElementType,
+  HorizontalConstraint,
+  Placement,
+  TextConfig,
+  VerticalConstraint,
+} from '../../types';
 import { v4 as uuidv4 } from '../../utils/uuid';
 
 // ── Element type list ─────────────────────────────────────────────────────────
@@ -19,18 +29,37 @@ const ELEMENT_TYPES: Array<{ label: string; value: ElementType }> = [
   { label: 'Parallelogram', value: 'parallelogram' },
 ];
 
+// ── Constraint options ────────────────────────────────────────────────────────
+
+const H_CONSTRAINT_OPTIONS: Array<{ label: string; value: HorizontalConstraint }> = [
+  { label: 'Left', value: 'left' },
+  { label: 'Center', value: 'center' },
+  { label: 'Right', value: 'right' },
+  { label: 'Left & Right (stretch)', value: 'leftright' },
+];
+
+const V_CONSTRAINT_OPTIONS: Array<{ label: string; value: VerticalConstraint }> = [
+  { label: 'Top', value: 'top' },
+  { label: 'Center', value: 'center' },
+  { label: 'Bottom', value: 'bottom' },
+  { label: 'Top & Bottom (stretch)', value: 'topbottom' },
+];
+
 // ── Default element factory ───────────────────────────────────────────────────
+
+function defaultPlacement(width = 120, height = 60): Placement {
+  return { top: 50, left: 50, right: 0, bottom: 0, width, height, rotation: 0 };
+}
+
+const defaultConstraint: ElementConstraint = { horizontal: 'left', vertical: 'top' };
 
 function defaultElement(type: ElementType, zIndex: number): CanvasElement {
   const base: CanvasElement = {
     id: uuidv4(),
     type,
     name: `${type}-${zIndex}`,
-    x: 50,
-    y: 50,
-    width: 120,
-    height: 60,
-    rotation: 0,
+    placement: defaultPlacement(),
+    constraint: { ...defaultConstraint },
     background: { color: { mode: 'fixed', value: '#3d71d9' } },
     border: { width: 1, color: { mode: 'fixed', value: '#555' }, radius: 4 },
     text: {
@@ -55,14 +84,12 @@ function defaultElement(type: ElementType, zIndex: number): CanvasElement {
   if (type === 'icon') {
     base.iconName = 'database';
     base.iconColor = { mode: 'fixed', value: '#ffffff' };
-    base.width = 60;
-    base.height = 60;
+    base.placement = defaultPlacement(60, 60);
   }
   if (type === 'server') {
     base.serverVariant = 'single';
     base.statusColor = { mode: 'fixed', value: '#73bf69' };
-    base.width = 80;
-    base.height = 100;
+    base.placement = defaultPlacement(80, 100);
   }
   return base;
 }
@@ -77,35 +104,66 @@ function fixedText(cfg: TextConfig): string {
   return cfg.mode === 'fixed' ? cfg.value : '';
 }
 
-// ── Alignment buttons ─────────────────────────────────────────────────────────
+// ── Quick placement buttons ───────────────────────────────────────────────────
 
-interface AlignmentButtonsProps {
+interface QuickPlacementProps {
   el: CanvasElement;
-  panelWidth: number;
-  panelHeight: number;
   onUpdate: (partial: Partial<CanvasElement>) => void;
 }
 
-const ALIGNMENTS: Array<{ label: string; title: string; fn: (el: CanvasElement, pw: number, ph: number) => Partial<CanvasElement> }> = [
-  { label: '⇤', title: 'Align left edge to panel left', fn: (el) => ({ x: 0 }) },
-  { label: '↔', title: 'Center horizontally', fn: (el, pw) => ({ x: Math.round((pw - el.width) / 2) }) },
-  { label: '⇥', title: 'Align right edge to panel right', fn: (el, pw) => ({ x: pw - el.width }) },
-  { label: '⇡', title: 'Align top edge to panel top', fn: (el) => ({ y: 0 }) },
-  { label: '↕', title: 'Center vertically', fn: (el, _pw, ph) => ({ y: Math.round((ph - el.height) / 2) }) },
-  { label: '⇣', title: 'Align bottom edge to panel bottom', fn: (el, _pw, ph) => ({ y: ph - el.height }) },
+const QUICK_H: Array<{
+  label: string;
+  title: string;
+  constraint: HorizontalConstraint;
+  placementReset: Partial<Placement>;
+}> = [
+  { label: '⇤', title: 'Align left (left constraint, offset = 0)', constraint: 'left',   placementReset: { left: 0 } },
+  { label: '↔', title: 'Center horizontally (center constraint, offset = 0)', constraint: 'center', placementReset: { left: 0 } },
+  { label: '⇥', title: 'Align right (right constraint, offset = 0)', constraint: 'right',  placementReset: { right: 0 } },
 ];
 
-const AlignmentButtons: React.FC<AlignmentButtonsProps> = ({ el, panelWidth, panelHeight, onUpdate }) => {
-  const hasDims = panelWidth > 0 && panelHeight > 0;
+const QUICK_V: Array<{
+  label: string;
+  title: string;
+  constraint: VerticalConstraint;
+  placementReset: Partial<Placement>;
+}> = [
+  { label: '⇡', title: 'Align top (top constraint, offset = 0)', constraint: 'top',    placementReset: { top: 0 } },
+  { label: '↕', title: 'Center vertically (center constraint, offset = 0)', constraint: 'center', placementReset: { top: 0 } },
+  { label: '⇣', title: 'Align bottom (bottom constraint, offset = 0)', constraint: 'bottom', placementReset: { bottom: 0 } },
+];
+
+const QuickPlacement: React.FC<QuickPlacementProps> = ({ el, onUpdate }) => {
   return (
     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-      {ALIGNMENTS.map(({ label, title, fn }) => (
-        <Tooltip key={title} content={hasDims ? title : `${title} (open panel editor to enable)`}>
+      {QUICK_H.map(({ label, title, constraint, placementReset }) => (
+        <Tooltip key={title} content={title}>
           <Button
             size="sm"
-            variant="secondary"
-            disabled={!hasDims}
-            onClick={() => onUpdate(fn(el, panelWidth, panelHeight))}
+            variant={el.constraint.horizontal === constraint ? 'primary' : 'secondary'}
+            onClick={() =>
+              onUpdate({
+                constraint: { ...el.constraint, horizontal: constraint },
+                placement: { ...el.placement, ...placementReset },
+              })
+            }
+            style={{ fontFamily: 'monospace', minWidth: 32 }}
+          >
+            {label}
+          </Button>
+        </Tooltip>
+      ))}
+      {QUICK_V.map(({ label, title, constraint, placementReset }) => (
+        <Tooltip key={title} content={title}>
+          <Button
+            size="sm"
+            variant={el.constraint.vertical === constraint ? 'primary' : 'secondary'}
+            onClick={() =>
+              onUpdate({
+                constraint: { ...el.constraint, vertical: constraint },
+                placement: { ...el.placement, ...placementReset },
+              })
+            }
             style={{ fontFamily: 'monospace', minWidth: 32 }}
           >
             {label}
@@ -113,6 +171,73 @@ const AlignmentButtons: React.FC<AlignmentButtonsProps> = ({ el, panelWidth, pan
         </Tooltip>
       ))}
     </div>
+  );
+};
+
+// ── Position fields (label depends on constraint) ─────────────────────────────
+
+interface PositionFieldsProps {
+  el: CanvasElement;
+  onUpdate: (partial: Partial<CanvasElement>) => void;
+}
+
+const PositionFields: React.FC<PositionFieldsProps> = ({ el, onUpdate }) => {
+  const { constraint, placement } = el;
+
+  const setPlacement = (partial: Partial<Placement>) =>
+    onUpdate({ placement: { ...placement, ...partial } });
+
+  const hLabel =
+    constraint.horizontal === 'left' ? 'Left (px from left)'
+    : constraint.horizontal === 'right' ? 'Right (px from right)'
+    : constraint.horizontal === 'leftright' ? 'Left (px from left)'
+    : 'H offset (from center)';
+
+  const vLabel =
+    constraint.vertical === 'top' ? 'Top (px from top)'
+    : constraint.vertical === 'bottom' ? 'Bottom (px from bottom)'
+    : constraint.vertical === 'topbottom' ? 'Top (px from top)'
+    : 'V offset (from center)';
+
+  const hValue =
+    constraint.horizontal === 'right' ? placement.right : placement.left;
+
+  const vValue =
+    constraint.vertical === 'bottom' ? placement.bottom : placement.top;
+
+  const onHChange = (v: number) =>
+    constraint.horizontal === 'right'
+      ? setPlacement({ right: v })
+      : setPlacement({ left: v });
+
+  const onVChange = (v: number) =>
+    constraint.vertical === 'bottom'
+      ? setPlacement({ bottom: v })
+      : setPlacement({ top: v });
+
+  return (
+    <>
+      <Field label={hLabel}>
+        <Input type="number" value={hValue}
+          onChange={(e) => onHChange(Number(e.currentTarget.value))} />
+      </Field>
+      <Field label={vLabel}>
+        <Input type="number" value={vValue}
+          onChange={(e) => onVChange(Number(e.currentTarget.value))} />
+      </Field>
+      {constraint.horizontal === 'leftright' && (
+        <Field label="Right (px from right)">
+          <Input type="number" value={placement.right}
+            onChange={(e) => setPlacement({ right: Number(e.currentTarget.value) })} />
+        </Field>
+      )}
+      {constraint.vertical === 'topbottom' && (
+        <Field label="Bottom (px from bottom)">
+          <Input type="number" value={placement.bottom}
+            onChange={(e) => setPlacement({ bottom: Number(e.currentTarget.value) })} />
+        </Field>
+      )}
+    </>
   );
 };
 
@@ -165,15 +290,11 @@ const getStyles = (theme: GrafanaTheme2) => ({
 export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unknown, CanvasOptions>> = ({
   value,
   onChange,
-  context,
 }) => {
   const styles = useStyles2(getStyles);
   const elements = value ?? [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [newType, setNewType] = useState<ElementType>('rectangle');
-
-  const panelWidth = context.options?._panelWidth ?? 0;
-  const panelHeight = context.options?._panelHeight ?? 0;
 
   const updateElement = (id: string, partial: Partial<CanvasElement>) =>
     onChange(elements.map((el) => (el.id === id ? { ...el, ...partial } : el)));
@@ -197,12 +318,8 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
               {el.name} <em style={{ opacity: 0.6 }}>({el.type})</em>
             </span>
             <div className={styles.actions}>
-              <IconButton
-                name="trash-alt"
-                size="sm"
-                tooltip="Delete element"
-                onClick={(e) => { e.stopPropagation(); removeElement(el.id); }}
-              />
+              <IconButton name="trash-alt" size="sm" tooltip="Delete element"
+                onClick={(e) => { e.stopPropagation(); removeElement(el.id); }} />
               <IconButton
                 name={expandedId === el.id ? 'angle-up' : 'angle-down'}
                 size="sm"
@@ -219,40 +336,63 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
 
               {/* ── Quick placement ── */}
               <div className={styles.section}>Quick placement</div>
-              <AlignmentButtons
-                el={el}
-                panelWidth={panelWidth}
-                panelHeight={panelHeight}
-                onUpdate={(partial) => updateElement(el.id, partial)}
-              />
+              <QuickPlacement el={el} onUpdate={(p) => updateElement(el.id, p)} />
 
-              {/* ── Position & size ── */}
-              <div className={styles.section}>Position &amp; Size</div>
+              {/* ── Layout / Constraint ── */}
+              <div className={styles.section}>Layout</div>
               <div className={styles.twoCol}>
-                <Field label="X">
-                  <Input type="number" value={el.x} width={8}
-                    onChange={(e) => updateElement(el.id, { x: Number(e.currentTarget.value) })} />
+                <Field label="Horizontal">
+                  <Select
+                    width={14}
+                    options={H_CONSTRAINT_OPTIONS}
+                    value={el.constraint.horizontal}
+                    onChange={(v) =>
+                      updateElement(el.id, { constraint: { ...el.constraint, horizontal: v.value! } })
+                    }
+                  />
                 </Field>
-                <Field label="Y">
-                  <Input type="number" value={el.y} width={8}
-                    onChange={(e) => updateElement(el.id, { y: Number(e.currentTarget.value) })} />
+                <Field label="Vertical">
+                  <Select
+                    width={14}
+                    options={V_CONSTRAINT_OPTIONS}
+                    value={el.constraint.vertical}
+                    onChange={(v) =>
+                      updateElement(el.id, { constraint: { ...el.constraint, vertical: v.value! } })
+                    }
+                  />
                 </Field>
               </div>
+
+              {/* ── Position offsets (labels match constraint) ── */}
+              <PositionFields el={el} onUpdate={(p) => updateElement(el.id, p)} />
+
+              {/* ── Size ── */}
+              <div className={styles.section}>Size</div>
               <div className={styles.twoCol}>
                 <Field label="Width">
-                  <Input type="number" value={el.width} width={8}
-                    onChange={(e) => updateElement(el.id, { width: Number(e.currentTarget.value) })} />
+                  <Input type="number" value={el.placement.width} width={8}
+                    onChange={(e) =>
+                      updateElement(el.id, { placement: { ...el.placement, width: Number(e.currentTarget.value) } })
+                    }
+                  />
                 </Field>
                 <Field label="Height">
-                  <Input type="number" value={el.height} width={8}
-                    onChange={(e) => updateElement(el.id, { height: Number(e.currentTarget.value) })} />
+                  <Input type="number" value={el.placement.height} width={8}
+                    onChange={(e) =>
+                      updateElement(el.id, { placement: { ...el.placement, height: Number(e.currentTarget.value) } })
+                    }
+                  />
                 </Field>
               </div>
+              <Field label="Rotation °">
+                <Input type="number" value={el.placement.rotation}
+                  onChange={(e) =>
+                    updateElement(el.id, { placement: { ...el.placement, rotation: Number(e.currentTarget.value) } })
+                  }
+                />
+              </Field>
+
               <div className={styles.twoCol}>
-                <Field label="Rotation °">
-                  <Input type="number" value={el.rotation} width={8}
-                    onChange={(e) => updateElement(el.id, { rotation: Number(e.currentTarget.value) })} />
-                </Field>
                 <Field label="Z-Index">
                   <Input type="number" value={el.zIndex} width={8}
                     onChange={(e) => updateElement(el.id, { zIndex: Number(e.currentTarget.value) })} />
@@ -264,7 +404,9 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
               <Field label="Color">
                 <ColorPickerInput
                   value={fixedColor(el.background.color)}
-                  onChange={(c) => updateElement(el.id, { background: { ...el.background, color: { mode: 'fixed', value: c } } })}
+                  onChange={(c) =>
+                    updateElement(el.id, { background: { ...el.background, color: { mode: 'fixed', value: c } } })
+                  }
                 />
               </Field>
 
@@ -283,7 +425,9 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
               <Field label="Color">
                 <ColorPickerInput
                   value={fixedColor(el.border.color)}
-                  onChange={(c) => updateElement(el.id, { border: { ...el.border, color: { mode: 'fixed', value: c } } })}
+                  onChange={(c) =>
+                    updateElement(el.id, { border: { ...el.border, color: { mode: 'fixed', value: c } } })
+                  }
                 />
               </Field>
 
@@ -295,14 +439,19 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
                     <Input
                       value={fixedText(el.text.content)}
                       onChange={(e) =>
-                        updateElement(el.id, { text: { ...el.text!, content: { mode: 'fixed', value: e.currentTarget.value } } })
+                        updateElement(el.id, {
+                          text: { ...el.text!, content: { mode: 'fixed', value: e.currentTarget.value } },
+                        })
                       }
                     />
                   </Field>
                   <div className={styles.twoCol}>
                     <Field label="Size px">
                       <Input type="number" value={el.text.size} width={8}
-                        onChange={(e) => updateElement(el.id, { text: { ...el.text!, size: Number(e.currentTarget.value) } })} />
+                        onChange={(e) =>
+                          updateElement(el.id, { text: { ...el.text!, size: Number(e.currentTarget.value) } })
+                        }
+                      />
                     </Field>
                     <Field label="Align">
                       <Select
@@ -344,7 +493,9 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
                   <Field label="Font family">
                     <Input
                       value={el.text.fontFamily}
-                      onChange={(e) => updateElement(el.id, { text: { ...el.text!, fontFamily: e.currentTarget.value } })}
+                      onChange={(e) =>
+                        updateElement(el.id, { text: { ...el.text!, fontFamily: e.currentTarget.value } })
+                      }
                     />
                   </Field>
                   <Field label="Text color">
@@ -358,20 +509,18 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
                 </>
               )}
 
-              {/* ── Icon-specific ── */}
+              {/* ── Icon ── */}
               {el.type === 'icon' && (
                 <>
                   <div className={styles.section}>Icon</div>
                   <Field label="Icon name" description="Any @grafana/ui icon name">
-                    <Input
-                      value={el.iconName ?? ''}
-                      onChange={(e) => updateElement(el.id, { iconName: e.currentTarget.value })}
-                    />
+                    <Input value={el.iconName ?? ''}
+                      onChange={(e) => updateElement(el.id, { iconName: e.currentTarget.value })} />
                   </Field>
                 </>
               )}
 
-              {/* ── Server-specific ── */}
+              {/* ── Server ── */}
               {el.type === 'server' && (
                 <>
                   <div className={styles.section}>Server</div>
@@ -395,12 +544,8 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
       ))}
 
       <div className={styles.addRow}>
-        <Select
-          options={ELEMENT_TYPES}
-          value={newType}
-          onChange={(v) => setNewType(v.value!)}
-          width={16}
-        />
+        <Select options={ELEMENT_TYPES} value={newType}
+          onChange={(v) => setNewType(v.value!)} width={16} />
         <Button size="sm" onClick={addElement}>Add element</Button>
       </div>
     </div>
