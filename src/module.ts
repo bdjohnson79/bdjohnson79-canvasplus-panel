@@ -3,14 +3,6 @@ import { CanvasOptions } from './types';
 import { CanvasPanel } from './components/CanvasPanel';
 import { ElementsEditor } from './components/editor/ElementsEditor';
 
-const defaultOptions: Partial<CanvasOptions> = {
-  elements: [],
-  connections: [],
-  background: { color: 'transparent' },
-  inlineEditing: false,
-  panZoom: false,
-};
-
 export const plugin = new PanelPlugin<CanvasOptions>(CanvasPanel)
   .useFieldConfig({
     standardOptions: {
@@ -54,5 +46,4 @@ export const plugin = new PanelPlugin<CanvasOptions>(CanvasPanel)
         defaultValue: [],
         editor: ElementsEditor,
       })
-  )
-  .setDefaults(defaultOptions as CanvasOptions);
+  );

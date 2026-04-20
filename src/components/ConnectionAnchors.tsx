@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import { AnchorPoint } from '../types';
 
 interface Props {
+  rotation: number;
   onAnchorMouseDown: (anchor: AnchorPoint, clientX: number, clientY: number) => void;
 }
 
@@ -40,15 +41,16 @@ const HALF_SIZE = 2.5; // half of the 5px icon
 const PADDING = 3;     // clickable padding around icon (matches stock ANCHOR_PADDING)
 const HIGHLIGHT_HALF = 8; // half of 16px highlight circle
 
-export const ConnectionAnchors: React.FC<Props> = ({ onAnchorMouseDown }) => {
+export const ConnectionAnchors: React.FC<Props> = ({ rotation, onAnchorMouseDown }) => {
   const highlightRef = useRef<HTMLDivElement>(null);
 
   const onAnchorEnter = (e: React.MouseEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
     if (highlightRef.current) {
-      // Position highlight circle centered on the anchor image
-      const top = parseFloat(img.style.top) - HIGHLIGHT_HALF + HALF_SIZE + PADDING;
-      const left = parseFloat(img.style.left) - HIGHLIGHT_HALF + HALF_SIZE + PADDING;
+      // Use offsetLeft/offsetTop (pixel offset within offsetParent) instead of
+      // parseFloat(img.style.top/left), which returns NaN for calc() strings.
+      const top = img.offsetTop + img.offsetHeight / 2 - HIGHLIGHT_HALF;
+      const left = img.offsetLeft + img.offsetWidth / 2 - HIGHLIGHT_HALF;
       highlightRef.current.style.display = 'block';
       highlightRef.current.style.top = `${top}px`;
       highlightRef.current.style.left = `${left}px`;
@@ -62,7 +64,17 @@ export const ConnectionAnchors: React.FC<Props> = ({ onAnchorMouseDown }) => {
   };
 
   return (
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 100 }}>
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        pointerEvents: 'none',
+        zIndex: 100,
+        // Counter-rotate so anchor X's appear at unrotated canvas-aligned positions,
+        // matching stock Grafana Canvas panel behavior.
+        transform: rotation ? `rotate(${-rotation}deg)` : undefined,
+      }}
+    >
 
       {/* Green highlight circle — appears centered on whichever anchor is hovered */}
       <div

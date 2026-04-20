@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { GrafanaTheme2, StandardEditorProps } from '@grafana/data';
-import { CanvasElementSelectedEvent } from '../../events';
+import { CanvasElementSelectedEvent, CanvasElementDeleteEvent } from '../../events';
 import { Button, Field, Icon, IconButton, IconName, Input, Select, TextArea, Tooltip, getAvailableIcons, useStyles2, useTheme2 } from '@grafana/ui';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { css } from '@emotion/css';
@@ -486,8 +486,10 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
     onChange(elements.map((el) => (el.id === id ? { ...el, ...partial } : el)));
 
   const removeElement = (id: string) => {
-    onChange(elements.filter((el) => el.id !== id));
-    if (expandedId === id) {setExpandedId(null);}
+    if (expandedId === id) { setExpandedId(null); }
+    // Publish the delete event so CanvasContainer handles both element removal
+    // and orphaned connection cleanup atomically via onOptionsChange.
+    context.eventBus?.publish(new CanvasElementDeleteEvent({ elementId: id }));
   };
 
   const duplicateElement = (id: string) => {

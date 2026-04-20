@@ -5,10 +5,10 @@ import { AnchorPoint, CanvasConnection, CanvasElement, CanvasOptions, PixelRect 
 import { resolvePixelRect } from '../utils/placement';
 import { ElementRegistry } from './elements';
 import { useDataBinding } from './hooks/useDataBinding';
-import { ConnectionLayer, anchorPixel, ALL_ANCHORS } from './ConnectionLayer';
+import { ConnectionLayer, ConnectionLayerHandle, anchorPixel, ALL_ANCHORS } from './ConnectionLayer';
 import { ConnectionAnchors } from './ConnectionAnchors';
 import { DragLayer } from './editor/DragLayer';
-import { CanvasElementSelectedEvent } from '../events';
+import { CanvasElementSelectedEvent, CanvasElementDeleteEvent } from '../events';
 import { v4 as uuidv4 } from '../utils/uuid';
 
 // ── Nearest anchor helper ─────────────────────────────────────────────────────
@@ -165,6 +165,7 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
         {/* Anchor X overlay — only shown on hover; hidden when selected or cursor leaves 30px buffer */}
         {editMode && !isSelected && showAnchors && (
           <ConnectionAnchors
+            rotation={element.placement.rotation ?? 0}
             onAnchorMouseDown={(anchor, clientX, clientY) =>
               onAnchorMouseDown(element.id, anchor, clientX, clientY)
             }
@@ -208,20 +209,19 @@ export const CanvasContainer: React.FC<Props> = ({
 }) => {
   const theme = useTheme2();
   const canvasRef = useRef<HTMLDivElement>(null);
+  const connectionLayerRef = useRef<ConnectionLayerHandle>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [hoveredElementId, setHoveredElementId] = useState<string | null>(null);
 
-  // Connection drag state — tracks a connection being drawn via mousedown+drag
-  const [drawingConn, setDrawingConn] = useState<{
+  // Connection drag source — no x2/y2 here; the preview line is updated imperatively
+  // via connectionLayerRef to avoid a React re-render on every mousemove frame.
+  const [drawingConnSrc, setDrawingConnSrc] = useState<{
     sourceId: string;
     sourceAnchor: AnchorPoint;
-    x2: number;
-    y2: number;
     startClientX: number;
     startClientY: number;
   } | null>(null);
-
 
   // Subscribe to selection events from the sidebar editor
   useEffect(() => {
@@ -235,7 +235,8 @@ export const CanvasContainer: React.FC<Props> = ({
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setDrawingConn(null);
+        connectionLayerRef.current?.clearPreview();
+        setDrawingConnSrc(null);
         setSelectedId(null);
       }
     };
@@ -249,7 +250,7 @@ export const CanvasContainer: React.FC<Props> = ({
       if (e.key === 'Delete' && selectedConnectionId) {
         onOptionsChange({
           ...options,
-          connections: options.connections.filter((c) => c.id !== selectedConnectionId),
+          connections: (options.connections ?? []).filter((c) => c.id !== selectedConnectionId),
         });
         setSelectedConnectionId(null);
       }
@@ -269,7 +270,7 @@ export const CanvasContainer: React.FC<Props> = ({
     (id: string, partial: Partial<CanvasElement>) => {
       onOptionsChange({
         ...options,
-        elements: options.elements.map((el) => (el.id === id ? { ...el, ...partial } : el)),
+        elements: (options.elements ?? []).map((el) => (el.id === id ? { ...el, ...partial } : el)),
       });
     },
     [options, onOptionsChange]
@@ -279,7 +280,7 @@ export const CanvasContainer: React.FC<Props> = ({
     (id: string, partial: Partial<CanvasConnection>) => {
       onOptionsChange({
         ...options,
-        connections: options.connections.map((c) => (c.id === id ? { ...c, ...partial } : c)),
+        connections: (options.connections ?? []).map((c) => (c.id === id ? { ...c, ...partial } : c)),
       });
     },
     [options, onOptionsChange]
@@ -289,19 +290,35 @@ export const CanvasContainer: React.FC<Props> = ({
     (id: string) => {
       onOptionsChange({
         ...options,
-        elements: options.elements.filter((el) => el.id !== id),
-        connections: options.connections.filter((c) => c.sourceId !== id && c.targetId !== id),
+        elements: (options.elements ?? []).filter((el) => el.id !== id),
+        connections: (options.connections ?? []).filter((c) => c.sourceId !== id && c.targetId !== id),
       });
       setSelectedId(null);
     },
     [options, onOptionsChange]
   );
 
+  // Use a ref so the CanvasElementDeleteEvent subscription never stales —
+  // deleteElement changes whenever options changes, but the subscription only
+  // needs to be set up once per eventBus instance.
+  const deleteElementRef = useRef(deleteElement);
+  useEffect(() => {
+    deleteElementRef.current = deleteElement;
+  });
+
+  useEffect(() => {
+    const sub = eventBus.subscribe(CanvasElementDeleteEvent, (event) => {
+      deleteElementRef.current(event.payload.elementId);
+    });
+    return () => sub.unsubscribe();
+  }, [eventBus]);
+
   const duplicateElement = useCallback(
     (id: string) => {
-      const source = options.elements.find((el) => el.id === id);
+      const elements = options.elements ?? [];
+      const source = elements.find((el) => el.id === id);
       if (!source) { return; }
-      const zIndex = options.elements.length > 0 ? Math.max(...options.elements.map((e) => e.zIndex)) + 1 : 1;
+      const zIndex = elements.length > 0 ? Math.max(...elements.map((e) => e.zIndex)) + 1 : 1;
       const copy: CanvasElement = {
         ...source,
         id: uuidv4(),
@@ -309,17 +326,18 @@ export const CanvasContainer: React.FC<Props> = ({
         zIndex,
         placement: { ...source.placement, top: source.placement.top + 5, left: source.placement.left + 5 },
       };
-      onOptionsChange({ ...options, elements: [...options.elements, copy] });
+      onOptionsChange({ ...options, elements: [...elements, copy] });
     },
     [options, onOptionsChange]
   );
 
   const moveToTop = useCallback(
     (id: string) => {
-      const maxZ = options.elements.length > 0 ? Math.max(...options.elements.map((e) => e.zIndex)) : 0;
+      const elements = options.elements ?? [];
+      const maxZ = elements.length > 0 ? Math.max(...elements.map((e) => e.zIndex)) : 0;
       onOptionsChange({
         ...options,
-        elements: options.elements.map((el) => (el.id === id ? { ...el, zIndex: maxZ + 1 } : el)),
+        elements: elements.map((el) => (el.id === id ? { ...el, zIndex: maxZ + 1 } : el)),
       });
     },
     [options, onOptionsChange]
@@ -329,7 +347,7 @@ export const CanvasContainer: React.FC<Props> = ({
     (id: string) => {
       onOptionsChange({
         ...options,
-        elements: options.elements.map((el) =>
+        elements: (options.elements ?? []).map((el) =>
           el.id === id ? { ...el, zIndex: 0 } : { ...el, zIndex: el.zIndex + 1 }
         ),
       });
@@ -346,21 +364,14 @@ export const CanvasContainer: React.FC<Props> = ({
 
   // ── connection drawing ──────────────────────────────────────────────────────
 
-  // Called by ConnectionAnchors when user presses mouse button on an anchor X
   const handleAnchorMouseDown = useCallback(
     (elementId: string, anchor: AnchorPoint, clientX: number, clientY: number) => {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (!rect) { return; }
       const x = (clientX - rect.left - pan.x) / zoom;
       const y = (clientY - rect.top  - pan.y) / zoom;
-      setDrawingConn({
-        sourceId: elementId,
-        sourceAnchor: anchor,
-        x2: x,
-        y2: y,
-        startClientX: clientX,
-        startClientY: clientY,
-      });
+      setDrawingConnSrc({ sourceId: elementId, sourceAnchor: anchor, startClientX: clientX, startClientY: clientY });
+      connectionLayerRef.current?.updatePreview(elementId, anchor, x, y);
     },
     [pan, zoom]
   );
@@ -402,31 +413,32 @@ export const CanvasContainer: React.FC<Props> = ({
       if (isPanning.current) {
         setPan({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y });
       }
-      if (drawingConn) {
+      if (drawingConnSrc) {
         const rect = canvasRef.current?.getBoundingClientRect();
         if (rect) {
           const x = (e.clientX - rect.left - pan.x) / zoom;
           const y = (e.clientY - rect.top  - pan.y) / zoom;
-          setDrawingConn((d) => d ? { ...d, x2: x, y2: y } : null);
+          connectionLayerRef.current?.updatePreview(drawingConnSrc.sourceId, drawingConnSrc.sourceAnchor, x, y);
         }
       }
     },
-    [drawingConn, pan, zoom]
+    [drawingConnSrc, pan, zoom]
   );
 
   const onMouseUp = useCallback(
     (e: React.MouseEvent) => {
       isPanning.current = false;
 
-      if (!drawingConn) { return; }
+      if (!drawingConnSrc) { return; }
 
       const dist = Math.hypot(
-        e.clientX - drawingConn.startClientX,
-        e.clientY - drawingConn.startClientY
+        e.clientX - drawingConnSrc.startClientX,
+        e.clientY - drawingConnSrc.startClientY
       );
 
-      if (dist >= 8 && hoveredElementId && hoveredElementId !== drawingConn.sourceId) {
-        const targetEl = options.elements.find((el) => el.id === hoveredElementId);
+      if (dist >= 8 && hoveredElementId && hoveredElementId !== drawingConnSrc.sourceId) {
+        const elements = options.elements ?? [];
+        const targetEl = elements.find((el) => el.id === hoveredElementId);
         if (targetEl && canvasRef.current) {
           const targetRect = resolvePixelRect(targetEl.placement, targetEl.constraint, width, height);
           const canvasRect = canvasRef.current.getBoundingClientRect();
@@ -436,11 +448,11 @@ export const CanvasContainer: React.FC<Props> = ({
           onOptionsChange({
             ...options,
             connections: [
-              ...options.connections,
+              ...(options.connections ?? []),
               {
                 id: uuidv4(),
-                sourceId: drawingConn.sourceId,
-                sourceAnchor: drawingConn.sourceAnchor,
+                sourceId: drawingConnSrc.sourceId,
+                sourceAnchor: drawingConnSrc.sourceAnchor,
                 targetId: hoveredElementId,
                 targetAnchor,
                 color: { mode: 'fixed', value: theme.colors.text.secondary },
@@ -454,17 +466,21 @@ export const CanvasContainer: React.FC<Props> = ({
         }
       }
 
-      setDrawingConn(null);
+      connectionLayerRef.current?.clearPreview();
+      setDrawingConnSrc(null);
     },
-    [drawingConn, hoveredElementId, options, width, height, onOptionsChange, pan, zoom, theme]
+    [drawingConnSrc, hoveredElementId, options, width, height, onOptionsChange, pan, zoom, theme]
   );
 
   // ── resolve pixel rects for all elements ────────────────────────────────────
 
-  const sortedElements = [...options.elements].sort((a, b) => a.zIndex - b.zIndex);
+  const elements = options.elements ?? [];
+  const connections = options.connections ?? [];
+
+  const sortedElements = [...elements].sort((a, b) => a.zIndex - b.zIndex);
 
   const rectMap = new Map<string, PixelRect>();
-  for (const el of options.elements) {
+  for (const el of elements) {
     rectMap.set(el.id, resolvePixelRect(el.placement, el.constraint, width, height));
   }
 
@@ -480,13 +496,14 @@ export const CanvasContainer: React.FC<Props> = ({
           background: options.background.color || 'transparent',
           backgroundImage: options.background.image ? `url(${options.background.image})` : undefined,
           backgroundSize: 'cover',
-          cursor: drawingConn ? 'crosshair' : undefined,
+          cursor: drawingConnSrc ? 'crosshair' : undefined,
         }}
         onClick={() => {
           if (options.inlineEditing) {
             setSelectedId(null);
             setSelectedConnectionId(null);
-            setDrawingConn(null);
+            connectionLayerRef.current?.clearPreview();
+            setDrawingConnSrc(null);
           }
         }}
         onWheel={onWheel}
@@ -529,7 +546,8 @@ export const CanvasContainer: React.FC<Props> = ({
           })}
 
           <ConnectionLayer
-            connections={options.connections}
+            ref={connectionLayerRef}
+            connections={connections}
             rectMap={rectMap}
             width={width}
             height={height}
@@ -538,7 +556,6 @@ export const CanvasContainer: React.FC<Props> = ({
             editMode={options.inlineEditing}
             selectedConnectionId={selectedConnectionId ?? undefined}
             onSelectConnection={setSelectedConnectionId}
-            drawingConn={drawingConn}
           />
         </div>
       </div>
