@@ -63,15 +63,6 @@ export const ConnectionAnchors: React.FC<Props> = ({ onAnchorMouseDown }) => {
 
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 100 }}>
-      {/* Buffer zone — visually extends the hit area 30px beyond the element edges. */}
-      <div
-        style={{
-          position: 'absolute',
-          margin: '-30px',
-          width: 'calc(100% + 60px)',
-          height: 'calc(100% + 60px)',
-        }}
-      />
 
       {/* Green highlight circle — appears centered on whichever anchor is hovered */}
       <div

@@ -23,8 +23,8 @@ export function resolvePixelRect(
   panelWidth: number,
   panelHeight: number
 ): PixelRect {
-  let x: number;
-  let y: number;
+  let x = 0;
+  let y = 0;
   let width = placement.width;
   let height = placement.height;
 
@@ -60,7 +60,7 @@ export function resolvePixelRect(
       break;
   }
 
-  return { x: x!, y: y!, width, height };
+  return { x, y, width, height };
 }
 
 /**

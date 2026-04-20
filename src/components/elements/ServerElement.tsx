@@ -64,7 +64,7 @@ const ServerSVG: React.FC<{ variant: string; statusColor: string; width: number;
   );
 };
 
-export const ServerElement: React.FC<ElementProps> = ({ element, resolved }) => {
+export const ServerElement: React.FC<ElementProps> = ({ element, resolved, rect }) => {
   const variant = element.serverVariant || 'single';
 
   return (
@@ -86,8 +86,8 @@ export const ServerElement: React.FC<ElementProps> = ({ element, resolved }) => 
       <ServerSVG
         variant={variant}
         statusColor={resolved.statusColor}
-        width={element.placement.width}
-        height={element.text ? element.placement.height - 24 : element.placement.height}
+        width={rect.width}
+        height={element.text ? rect.height - 24 : rect.height}
       />
       {element.text && <span style={textStyle(element, resolved)}>{resolved.text}</span>}
     </div>

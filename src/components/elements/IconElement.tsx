@@ -1,10 +1,10 @@
 import React from 'react';
-import { Icon } from '@grafana/ui';
+import { Icon, IconName } from '@grafana/ui';
 import { ElementProps } from './index';
 
-export const IconElement: React.FC<ElementProps> = ({ element, resolved }) => {
-  const iconName = (element.iconName as any) || 'question-circle';
-  const size = Math.min(element.placement.width, element.placement.height);
+export const IconElement: React.FC<ElementProps> = ({ element, resolved, rect }) => {
+  const iconName = (element.iconName as IconName) || 'question-circle';
+  const size = Math.min(rect.width, rect.height);
 
   return (
     <div

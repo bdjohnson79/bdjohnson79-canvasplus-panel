@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { GrafanaTheme2, StandardEditorProps } from '@grafana/data';
 import { CanvasElementSelectedEvent } from '../../events';
-import { Button, Field, Icon, IconButton, Input, Select, TextArea, Tooltip, getAvailableIcons, useStyles2, useTheme2 } from '@grafana/ui';
+import { Button, Field, Icon, IconButton, IconName, Input, Select, TextArea, Tooltip, getAvailableIcons, useStyles2, useTheme2 } from '@grafana/ui';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { css } from '@emotion/css';
 import {
@@ -323,7 +323,7 @@ const IconPickerField: React.FC<IconPickerProps> = ({ value, onChange }) => {
         }}
         onClick={() => setOpen((o) => !o)}
       >
-        <Icon name={value as any} />
+        <Icon name={value as IconName} />
         <span style={{ flex: 1, textAlign: 'left' }}>{value}</span>
         <Icon name={open ? 'angle-up' : 'angle-down'} />
       </button>
@@ -385,7 +385,7 @@ const IconPickerField: React.FC<IconPickerProps> = ({ value, onChange }) => {
                 }}
                 onClick={() => { onChange(String(name)); setOpen(false); setSearch(''); }}
               >
-                <Icon name={name as any} size="lg" />
+                <Icon name={name as IconName} size="lg" />
               </div>
             ))}
           </div>

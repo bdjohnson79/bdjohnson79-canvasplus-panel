@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { EventBus, FieldConfigSource, GrafanaTheme2, InterpolateFunction, PanelData } from '@grafana/data';
+import { EventBus, GrafanaTheme2, PanelData } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
 import { AnchorPoint, CanvasConnection, CanvasElement, CanvasOptions, PixelRect } from '../types';
 import { resolvePixelRect } from '../utils/placement';
@@ -50,7 +50,6 @@ interface ElementWrapperProps {
   element: CanvasElement;
   rect: PixelRect;
   data: PanelData;
-  fieldConfig: FieldConfigSource;
   theme: GrafanaTheme2;
   editMode: boolean;
   isSelected: boolean;
@@ -66,7 +65,6 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
   element,
   rect,
   data,
-  fieldConfig,
   theme,
   editMode,
   isSelected,
@@ -78,7 +76,7 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
   onAnchorMouseDown,
 }) => {
   const ctx = useCanvasEdit();
-  const resolved = useDataBinding(element, data, fieldConfig, theme);
+  const resolved = useDataBinding(element, data, theme);
   const [showAnchors, setShowAnchors] = useState(false);
   const Component = ElementRegistry[element.type];
 
@@ -145,7 +143,24 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
           }
         }}
       >
-        <Component element={element} resolved={resolved} isSelected={isSelected} editMode={editMode} />
+        {/* 30px hover-extension zone — pointer-events: auto makes the browser treat
+            this area as part of the element's DOM subtree, so mouseleave on the
+            wrapper fires only when cursor is 30px beyond the element boundary.
+            Rendered before content so it sits visually behind the element body. */}
+        {editMode && !isSelected && showAnchors && (
+          <div
+            style={{
+              position: 'absolute',
+              top: -30,
+              left: -30,
+              width: 'calc(100% + 60px)',
+              height: 'calc(100% + 60px)',
+              pointerEvents: 'auto',
+            }}
+          />
+        )}
+
+        <Component element={element} resolved={resolved} rect={rect} isSelected={isSelected} editMode={editMode} />
 
         {/* Anchor X overlay — only shown on hover; hidden when selected or cursor leaves 30px buffer */}
         {editMode && !isSelected && showAnchors && (
@@ -177,19 +192,15 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
 interface Props {
   options: CanvasOptions;
   data: PanelData;
-  fieldConfig: FieldConfigSource;
   width: number;
   height: number;
   onOptionsChange: (opts: CanvasOptions) => void;
-  replaceVariables: InterpolateFunction;
   eventBus: EventBus;
-  timeZone: string;
 }
 
 export const CanvasContainer: React.FC<Props> = ({
   options,
   data,
-  fieldConfig,
   width,
   height,
   onOptionsChange,
@@ -416,9 +427,9 @@ export const CanvasContainer: React.FC<Props> = ({
 
       if (dist >= 8 && hoveredElementId && hoveredElementId !== drawingConn.sourceId) {
         const targetEl = options.elements.find((el) => el.id === hoveredElementId);
-        if (targetEl) {
+        if (targetEl && canvasRef.current) {
           const targetRect = resolvePixelRect(targetEl.placement, targetEl.constraint, width, height);
-          const canvasRect = canvasRef.current!.getBoundingClientRect();
+          const canvasRect = canvasRef.current.getBoundingClientRect();
           const cx = (e.clientX - canvasRect.left - pan.x) / zoom;
           const cy = (e.clientY - canvasRect.top  - pan.y) / zoom;
           const targetAnchor = nearestAnchor(targetRect, cx, cy);
@@ -504,7 +515,6 @@ export const CanvasContainer: React.FC<Props> = ({
                 element={el}
                 rect={rect}
                 data={data}
-                fieldConfig={fieldConfig}
                 theme={theme}
                 editMode={options.inlineEditing}
                 isSelected={el.id === selectedId}

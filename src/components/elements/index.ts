@@ -1,10 +1,11 @@
 import React from 'react';
-import { ElementType, CanvasElement } from '../../types';
+import { ElementType, CanvasElement, PixelRect } from '../../types';
 import { ResolvedStyle } from '../hooks/useDataBinding';
 
 export interface ElementProps {
   element: CanvasElement;
   resolved: ResolvedStyle;
+  rect: PixelRect;
   isSelected: boolean;
   editMode: boolean;
 }

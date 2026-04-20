@@ -32,7 +32,7 @@ function thresholdColor(field: Field, value: number, theme: GrafanaTheme2): stri
     const max = field.config?.max ?? 100;
     const pct = max === min ? 0 : ((value - min) / (max - min)) * 100;
     for (const step of thresholds.steps) {
-      if (pct >= step.value!) {
+      if (pct >= (step.value ?? 0)) {
         activeColor = step.color;
       }
     }

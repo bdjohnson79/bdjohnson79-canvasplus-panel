@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { PanelData, GrafanaTheme2, FieldConfigSource } from '@grafana/data';
+import { PanelData, GrafanaTheme2 } from '@grafana/data';
 import { CanvasElement } from '../../types';
 import { resolveColor, resolveImageSrc, resolveText } from '../../utils/colorUtils';
 
@@ -18,7 +18,6 @@ export interface ResolvedStyle {
 export function useDataBinding(
   element: CanvasElement,
   data: PanelData,
-  _fieldConfig: FieldConfigSource,
   theme: GrafanaTheme2
 ): ResolvedStyle {
   return useMemo(() => {
@@ -63,3 +62,4 @@ export function useDataBinding(
     return { bg, borderColor, text, textColor, iconColor, statusColor, imageSrc, metricValue, metricValueColor };
   }, [element, data.series, theme]);
 }
+
