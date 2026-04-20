@@ -19,12 +19,17 @@ export function textStyle(element: CanvasElement, resolved: ResolvedStyle): CSSP
   if (!element.text) {
     return {};
   }
+  const rawWeight = element.text.fontWeight as number | string;
+  const fontWeight =
+    typeof rawWeight === 'string'
+      ? rawWeight === 'bold' ? 700 : 400
+      : rawWeight;
   return {
     fontSize: element.text.size,
-    fontWeight: element.text.fontWeight,
+    fontWeight,
     fontStyle: element.text.fontStyle,
-    fontFamily: element.text.fontFamily || 'Inter, sans-serif',
-    color: resolved.text !== '' ? resolved.text : undefined,
+    fontFamily: 'Inter, sans-serif',
+    color: resolved.textColor || undefined,
     textAlign: element.text.align,
     padding: '4px',
     wordBreak: 'break-word',

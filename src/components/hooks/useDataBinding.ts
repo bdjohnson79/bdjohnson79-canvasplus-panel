@@ -7,9 +7,12 @@ export interface ResolvedStyle {
   bg: string;
   borderColor: string;
   text: string;
+  textColor: string;
   iconColor: string;
   statusColor: string;
   imageSrc: string;
+  metricValue: string;
+  metricValueColor: string;
 }
 
 export function useDataBinding(
@@ -28,6 +31,10 @@ export function useDataBinding(
       ? resolveText(element.text.content, series)
       : '';
 
+    const textColor = element.text
+      ? resolveColor(element.text.color, series, theme, theme.colors.text.primary)
+      : theme.colors.text.primary;
+
     const iconColor = element.iconColor
       ? resolveColor(element.iconColor, series, theme, theme.colors.text.primary)
       : theme.colors.text.primary;
@@ -38,6 +45,21 @@ export function useDataBinding(
 
     const imageSrc = resolveImageSrc(element, series);
 
-    return { bg, borderColor, text, iconColor, statusColor, imageSrc };
+    const metricValue =
+      element.type === 'metric-value' && element.metricField
+        ? resolveText({ mode: 'field', field: element.metricField }, series)
+        : '';
+
+    const metricValueColor =
+      element.type === 'metric-value'
+        ? resolveColor(
+            element.metricValueColor ?? { mode: 'fixed', value: theme.colors.text.primary },
+            series,
+            theme,
+            theme.colors.text.primary
+          )
+        : '';
+
+    return { bg, borderColor, text, textColor, iconColor, statusColor, imageSrc, metricValue, metricValueColor };
   }, [element, data.series, theme]);
 }

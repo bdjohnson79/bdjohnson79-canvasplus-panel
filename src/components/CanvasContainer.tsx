@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { PanelData, GrafanaTheme2, FieldConfigSource } from '@grafana/data';
+import { EventBus, FieldConfigSource, GrafanaTheme2, InterpolateFunction, PanelData } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
 import { CanvasElement, CanvasConnection, CanvasOptions, PixelRect } from '../types';
 import { resolvePixelRect } from '../utils/placement';
@@ -56,11 +56,36 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
-      if (!editMode) {return;}
-      e.stopPropagation();
-      ctx?.setSelectedId(element.id);
+      if (editMode) {
+        e.stopPropagation();
+        ctx?.setSelectedId(element.id);
+        return;
+      }
+
+      const fieldName =
+        element.metricField ||
+        (element.text?.content?.mode === 'field' ? element.text.content.field : undefined);
+      if (!fieldName) {
+        return;
+      }
+
+      for (const frame of data.series) {
+        const field = frame.fields.find((f) => f.name === fieldName);
+        if (field?.getLinks) {
+          const lastIdx = Math.max(0, field.values.length - 1);
+          const links = field.getLinks({ valueRowIndex: lastIdx });
+          if (links.length > 0) {
+            if (links[0].onClick) {
+              links[0].onClick(e.nativeEvent);
+            } else {
+              window.open(links[0].href, links[0].target ?? '_self');
+            }
+          }
+          break;
+        }
+      }
     },
-    [editMode, ctx, element.id]
+    [editMode, ctx, element, data.series]
   );
 
   return (
@@ -106,6 +131,9 @@ interface Props {
   width: number;
   height: number;
   onOptionsChange: (opts: CanvasOptions) => void;
+  replaceVariables: InterpolateFunction;
+  eventBus: EventBus;
+  timeZone: string;
 }
 
 export const CanvasContainer: React.FC<Props> = ({

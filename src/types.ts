@@ -7,7 +7,8 @@ export type ElementType =
   | 'cloud'
   | 'triangle'
   | 'parallelogram'
-  | 'image';
+  | 'image'
+  | 'metric-value';
 
 export type HorizontalConstraint = 'left' | 'right' | 'center' | 'leftright';
 export type VerticalConstraint = 'top' | 'bottom' | 'center' | 'topbottom';
@@ -40,9 +41,8 @@ export interface TextStyle {
   size: number;
   align: 'left' | 'center' | 'right';
   color: ColorConfig;
-  fontWeight: 'normal' | 'bold';
+  fontWeight: number;
   fontStyle: 'normal' | 'italic';
-  fontFamily: string;
 }
 
 export interface BorderStyle {
@@ -74,6 +74,12 @@ export interface CanvasElement {
   imageFormat?: 'svg+xml' | 'svg+xml;base64' | 'png' | 'jpeg' | 'gif' | 'webp';
   imageField?: string;
   imageFit?: 'contain' | 'cover' | 'fill' | 'none';
+  metricField?: string;
+  metricValueSize?: number;
+  metricValueWeight?: number;
+  metricValueStyle?: 'normal' | 'italic';
+  metricLabelPosition?: 'top' | 'bottom';
+  metricValueColor?: ColorConfig;
   zIndex: number;
 }
 

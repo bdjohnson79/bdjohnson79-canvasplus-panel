@@ -5,7 +5,17 @@ import { CanvasContainer } from './CanvasContainer';
 
 interface Props extends PanelProps<CanvasOptions> {}
 
-export const CanvasPanel: React.FC<Props> = ({ options, data, width, height, fieldConfig, onOptionsChange }) => {
+export const CanvasPanel: React.FC<Props> = ({
+  options,
+  data,
+  width,
+  height,
+  fieldConfig,
+  onOptionsChange,
+  replaceVariables,
+  eventBus,
+  timeZone,
+}) => {
   return (
     <CanvasContainer
       options={options}
@@ -14,6 +24,9 @@ export const CanvasPanel: React.FC<Props> = ({ options, data, width, height, fie
       width={width}
       height={height}
       onOptionsChange={onOptionsChange}
+      replaceVariables={replaceVariables}
+      eventBus={eventBus}
+      timeZone={timeZone}
     />
   );
 };

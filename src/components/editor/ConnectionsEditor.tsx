@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { GrafanaTheme2, StandardEditorProps } from '@grafana/data';
-import { Button, ColorPickerInput, Field, IconButton, Input, Select, useStyles2 } from '@grafana/ui';
+import { Button, Field, IconButton, Input, Select, useStyles2 } from '@grafana/ui';
+import { ColorConfigEditor } from './sharedEditors';
 import { css } from '@emotion/css';
 import { AnchorPoint, ArrowDirection, CanvasConnection, LineStyle } from '../../types';
 import { v4 as uuidv4 } from '../../utils/uuid';
@@ -79,10 +80,24 @@ const getStyles = (theme: GrafanaTheme2) => ({
   `,
 });
 
-export const ConnectionsEditor: React.FC<StandardEditorProps<CanvasConnection[]>> = ({ value, onChange }) => {
+export const ConnectionsEditor: React.FC<StandardEditorProps<CanvasConnection[]>> = ({ value, onChange, context }) => {
   const styles = useStyles2(getStyles);
   const connections = value ?? [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const fieldOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: Array<{ label: string; value: string }> = [];
+    for (const frame of context.data ?? []) {
+      for (const field of frame.fields) {
+        if (!seen.has(field.name)) {
+          seen.add(field.name);
+          opts.push({ label: field.name, value: field.name });
+        }
+      }
+    }
+    return opts;
+  }, [context.data]);
 
   const update = (id: string, partial: Partial<CanvasConnection>) => {
     onChange(connections.map((c) => (c.id === id ? { ...c, ...partial } : c)));
@@ -141,12 +156,12 @@ export const ConnectionsEditor: React.FC<StandardEditorProps<CanvasConnection[]>
               </Field>
 
               <div className={styles.section}>Appearance</div>
-              <Field label="Color">
-                <ColorPickerInput
-                  value={conn.color.mode === 'fixed' ? conn.color.value : '#aaaaaa'}
-                  onChange={(c) => update(conn.id, { color: { mode: 'fixed', value: c } })}
-                />
-              </Field>
+              <ColorConfigEditor
+                label="Color"
+                value={conn.color}
+                onChange={(c) => update(conn.id, { color: c })}
+                fieldOptions={fieldOptions}
+              />
               <Field label="Width">
                 <Input type="number" value={conn.width}
                   onChange={(e) => update(conn.id, { width: Number(e.currentTarget.value) })} />

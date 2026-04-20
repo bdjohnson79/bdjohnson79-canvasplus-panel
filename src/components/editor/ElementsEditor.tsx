@@ -1,19 +1,19 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { GrafanaTheme2, StandardEditorProps } from '@grafana/data';
-import { Button, ColorPickerInput, Field, IconButton, Input, Select, TextArea, Tooltip, useStyles2 } from '@grafana/ui';
+import { Button, Field, Icon, IconButton, Input, Select, TextArea, Tooltip, useStyles2 } from '@grafana/ui';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { css } from '@emotion/css';
 import {
   CanvasElement,
   CanvasOptions,
-  ColorConfig,
   ElementConstraint,
   ElementType,
   HorizontalConstraint,
   Placement,
-  TextConfig,
   VerticalConstraint,
 } from '../../types';
 import { v4 as uuidv4 } from '../../utils/uuid';
+import { ColorConfigEditor, TextConfigEditor } from './sharedEditors';
 
 // ── Element type list ─────────────────────────────────────────────────────────
 
@@ -27,6 +27,19 @@ const ELEMENT_TYPES: Array<{ label: string; value: ElementType }> = [
   { label: 'Triangle', value: 'triangle' },
   { label: 'Parallelogram', value: 'parallelogram' },
   { label: 'Image', value: 'image' },
+  { label: 'Metric Value', value: 'metric-value' },
+];
+
+const FONT_WEIGHT_OPTIONS: Array<{ label: string; value: number }> = [
+  { label: '100 — Thin', value: 100 },
+  { label: '200 — Extra Light', value: 200 },
+  { label: '300 — Light', value: 300 },
+  { label: '400 — Regular', value: 400 },
+  { label: '500 — Medium', value: 500 },
+  { label: '600 — Semi Bold', value: 600 },
+  { label: '700 — Bold', value: 700 },
+  { label: '800 — Extra Bold', value: 800 },
+  { label: '900 — Black', value: 900 },
 ];
 
 // ── Constraint options ────────────────────────────────────────────────────────
@@ -67,9 +80,8 @@ function defaultElement(type: ElementType, zIndex: number): CanvasElement {
       size: 14,
       align: 'center',
       color: { mode: 'fixed', value: '#ffffff' },
-      fontWeight: 'normal',
+      fontWeight: 400,
       fontStyle: 'normal',
-      fontFamily: 'Inter, sans-serif',
     },
     zIndex,
   };
@@ -80,6 +92,25 @@ function defaultElement(type: ElementType, zIndex: number): CanvasElement {
     if (base.text) {
       base.text.color = { mode: 'fixed', value: '#cccccc' };
     }
+  }
+  if (type === 'metric-value') {
+    base.background = { color: { mode: 'fixed', value: 'transparent' } };
+    base.border = { width: 0, color: { mode: 'fixed', value: 'transparent' }, radius: 0 };
+    base.text = {
+      content: { mode: 'fixed', value: '' },
+      size: 12,
+      align: 'center',
+      color: { mode: 'fixed', value: '#aaaaaa' },
+      fontWeight: 400,
+      fontStyle: 'normal',
+    };
+    base.metricField = '';
+    base.metricValueSize = 32;
+    base.metricValueWeight = 700;
+    base.metricValueStyle = 'normal';
+    base.metricLabelPosition = 'bottom';
+    base.metricValueColor = { mode: 'thresholds' };
+    base.placement = defaultPlacement(160, 100);
   }
   if (type === 'icon') {
     base.iconName = 'database';
@@ -101,16 +132,6 @@ function defaultElement(type: ElementType, zIndex: number): CanvasElement {
     base.placement = defaultPlacement(120, 80);
   }
   return base;
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function fixedColor(cfg: ColorConfig): string {
-  return cfg.mode === 'fixed' ? cfg.value : '#ffffff';
-}
-
-function fixedText(cfg: TextConfig): string {
-  return cfg.mode === 'fixed' ? cfg.value : '';
 }
 
 // ── Quick placement buttons ───────────────────────────────────────────────────
@@ -270,6 +291,12 @@ const getStyles = (theme: GrafanaTheme2) => ({
     gap: ${theme.spacing(0.5)};
     align-items: center;
   `,
+  dragIcon: css`
+    cursor: grab;
+    color: ${theme.colors.text.secondary};
+    margin-right: ${theme.spacing(0.5)};
+    flex-shrink: 0;
+  `,
   section: css`
     font-size: ${theme.typography.bodySmall.fontSize};
     font-weight: ${theme.typography.fontWeightMedium};
@@ -299,11 +326,26 @@ const getStyles = (theme: GrafanaTheme2) => ({
 export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unknown, CanvasOptions>> = ({
   value,
   onChange,
+  context,
 }) => {
   const styles = useStyles2(getStyles);
   const elements = value ?? [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [newType, setNewType] = useState<ElementType>('rectangle');
+
+  const fieldOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: Array<{ label: string; value: string }> = [];
+    for (const frame of context.data ?? []) {
+      for (const field of frame.fields) {
+        if (!seen.has(field.name)) {
+          seen.add(field.name);
+          opts.push({ label: field.name, value: field.name });
+        }
+      }
+    }
+    return opts;
+  }, [context.data]);
 
   const updateElement = (id: string, partial: Partial<CanvasElement>) =>
     onChange(elements.map((el) => (el.id === id ? { ...el, ...partial } : el)));
@@ -313,331 +355,429 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
     if (expandedId === id) {setExpandedId(null);}
   };
 
+  const duplicateElement = (id: string) => {
+    const source = elements.find((el) => el.id === id);
+    if (!source) { return; }
+    const zIndex = elements.length > 0 ? Math.max(...elements.map((e) => e.zIndex)) + 1 : 1;
+    const copy = { ...source, id: uuidv4(), name: `${source.name}-copy`, zIndex };
+    onChange([...elements, copy]);
+  };
+
   const addElement = () => {
     const zIndex = elements.length > 0 ? Math.max(...elements.map((e) => e.zIndex)) + 1 : 1;
     onChange([...elements, defaultElement(newType, zIndex)]);
   };
 
+  const onDragEnd = (result: DropResult) => {
+    if (!result.destination || result.destination.index === result.source.index) { return; }
+    const reordered = [...elements];
+    const [moved] = reordered.splice(result.source.index, 1);
+    reordered.splice(result.destination.index, 0, moved);
+    const normalized = reordered.map((el, i) => ({ ...el, zIndex: reordered.length - i }));
+    onChange(normalized);
+  };
+
   return (
     <div>
-      {elements.map((el) => (
-        <div key={el.id}>
-          <div className={styles.row} onClick={() => setExpandedId(expandedId === el.id ? null : el.id)}>
-            <span className={styles.rowLabel}>
-              {el.name} <em style={{ opacity: 0.6 }}>({el.type})</em>
-            </span>
-            <div className={styles.actions}>
-              <IconButton name="trash-alt" size="sm" tooltip="Delete element"
-                onClick={(e) => { e.stopPropagation(); removeElement(el.id); }} />
-              <IconButton
-                name={expandedId === el.id ? 'angle-up' : 'angle-down'}
-                size="sm"
-                tooltip={expandedId === el.id ? 'Collapse' : 'Expand'}
-              />
-            </div>
-          </div>
-
-          {expandedId === el.id && (
-            <div className={styles.elementForm}>
-              <Field label="Name">
-                <Input value={el.name} onChange={(e) => updateElement(el.id, { name: e.currentTarget.value })} />
-              </Field>
-
-              {/* ── Quick placement ── */}
-              <div className={styles.section}>Quick placement</div>
-              <QuickPlacement el={el} onUpdate={(p) => updateElement(el.id, p)} />
-
-              {/* ── Layout / Constraint ── */}
-              <div className={styles.section}>Layout</div>
-              <div className={styles.twoCol}>
-                <Field label="Horizontal">
-                  <Select
-                    width={14}
-                    options={H_CONSTRAINT_OPTIONS}
-                    value={el.constraint.horizontal}
-                    onChange={(v) =>
-                      updateElement(el.id, { constraint: { ...el.constraint, horizontal: v.value! } })
-                    }
-                  />
-                </Field>
-                <Field label="Vertical">
-                  <Select
-                    width={14}
-                    options={V_CONSTRAINT_OPTIONS}
-                    value={el.constraint.vertical}
-                    onChange={(v) =>
-                      updateElement(el.id, { constraint: { ...el.constraint, vertical: v.value! } })
-                    }
-                  />
-                </Field>
-              </div>
-
-              {/* ── Position offsets (labels match constraint) ── */}
-              <PositionFields el={el} onUpdate={(p) => updateElement(el.id, p)} />
-
-              {/* ── Size ── */}
-              <div className={styles.section}>Size</div>
-              <div className={styles.twoCol}>
-                <Field label="Width">
-                  <Input type="number" value={el.placement.width} width={8}
-                    onChange={(e) =>
-                      updateElement(el.id, { placement: { ...el.placement, width: Number(e.currentTarget.value) } })
-                    }
-                  />
-                </Field>
-                <Field label="Height">
-                  <Input type="number" value={el.placement.height} width={8}
-                    onChange={(e) =>
-                      updateElement(el.id, { placement: { ...el.placement, height: Number(e.currentTarget.value) } })
-                    }
-                  />
-                </Field>
-              </div>
-              <Field label="Rotation °">
-                <Input type="number" value={el.placement.rotation}
-                  onChange={(e) =>
-                    updateElement(el.id, { placement: { ...el.placement, rotation: Number(e.currentTarget.value) } })
-                  }
-                />
-              </Field>
-
-              <div className={styles.twoCol}>
-                <Field label="Z-Index">
-                  <Input type="number" value={el.zIndex} width={8}
-                    onChange={(e) => updateElement(el.id, { zIndex: Number(e.currentTarget.value) })} />
-                </Field>
-              </div>
-
-              {/* ── Background ── */}
-              <div className={styles.section}>Background</div>
-              <Field label="Color">
-                <ColorPickerInput
-                  value={fixedColor(el.background.color)}
-                  onChange={(c) =>
-                    updateElement(el.id, { background: { ...el.background, color: { mode: 'fixed', value: c } } })
-                  }
-                />
-              </Field>
-
-              {/* ── Border ── */}
-              <div className={styles.section}>Border</div>
-              <div className={styles.twoCol}>
-                <Field label="Width">
-                  <Input type="number" value={el.border.width} width={8}
-                    onChange={(e) => updateElement(el.id, { border: { ...el.border, width: Number(e.currentTarget.value) } })} />
-                </Field>
-                <Field label="Radius">
-                  <Input type="number" value={el.border.radius} width={8}
-                    onChange={(e) => updateElement(el.id, { border: { ...el.border, radius: Number(e.currentTarget.value) } })} />
-                </Field>
-              </div>
-              <Field label="Color">
-                <ColorPickerInput
-                  value={fixedColor(el.border.color)}
-                  onChange={(c) =>
-                    updateElement(el.id, { border: { ...el.border, color: { mode: 'fixed', value: c } } })
-                  }
-                />
-              </Field>
-
-              {/* ── Text ── */}
-              {el.text && (
-                <>
-                  <div className={styles.section}>Text</div>
-                  <Field label="Content">
-                    <Input
-                      value={fixedText(el.text.content)}
-                      onChange={(e) =>
-                        updateElement(el.id, {
-                          text: { ...el.text!, content: { mode: 'fixed', value: e.currentTarget.value } },
-                        })
-                      }
-                    />
-                  </Field>
-                  <div className={styles.twoCol}>
-                    <Field label="Size px">
-                      <Input type="number" value={el.text.size} width={8}
-                        onChange={(e) =>
-                          updateElement(el.id, { text: { ...el.text!, size: Number(e.currentTarget.value) } })
-                        }
-                      />
-                    </Field>
-                    <Field label="Align">
-                      <Select
-                        width={10}
-                        options={[
-                          { label: 'Left', value: 'left' as const },
-                          { label: 'Center', value: 'center' as const },
-                          { label: 'Right', value: 'right' as const },
-                        ]}
-                        value={el.text.align}
-                        onChange={(v) => updateElement(el.id, { text: { ...el.text!, align: v.value! } })}
-                      />
-                    </Field>
-                  </div>
-                  <div className={styles.twoCol}>
-                    <Field label="Weight">
-                      <Select
-                        width={10}
-                        options={[
-                          { label: 'Normal', value: 'normal' as const },
-                          { label: 'Bold', value: 'bold' as const },
-                        ]}
-                        value={el.text.fontWeight}
-                        onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontWeight: v.value! } })}
-                      />
-                    </Field>
-                    <Field label="Style">
-                      <Select
-                        width={10}
-                        options={[
-                          { label: 'Normal', value: 'normal' as const },
-                          { label: 'Italic', value: 'italic' as const },
-                        ]}
-                        value={el.text.fontStyle}
-                        onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontStyle: v.value! } })}
-                      />
-                    </Field>
-                  </div>
-                  <Field label="Font family">
-                    <Input
-                      value={el.text.fontFamily}
-                      onChange={(e) =>
-                        updateElement(el.id, { text: { ...el.text!, fontFamily: e.currentTarget.value } })
-                      }
-                    />
-                  </Field>
-                  <Field label="Text color">
-                    <ColorPickerInput
-                      value={fixedColor(el.text.color)}
-                      onChange={(c) =>
-                        updateElement(el.id, { text: { ...el.text!, color: { mode: 'fixed', value: c } } })
-                      }
-                    />
-                  </Field>
-                </>
-              )}
-
-              {/* ── Icon ── */}
-              {el.type === 'icon' && (
-                <>
-                  <div className={styles.section}>Icon</div>
-                  <Field label="Icon name" description="Any @grafana/ui icon name">
-                    <Input value={el.iconName ?? ''}
-                      onChange={(e) => updateElement(el.id, { iconName: e.currentTarget.value })} />
-                  </Field>
-                </>
-              )}
-
-              {/* ── Server ── */}
-              {el.type === 'server' && (
-                <>
-                  <div className={styles.section}>Server</div>
-                  <Field label="Variant">
-                    <Select
-                      options={[
-                        { label: 'Single', value: 'single' as const },
-                        { label: 'Stack', value: 'stack' as const },
-                        { label: 'Database', value: 'database' as const },
-                        { label: 'Terminal', value: 'terminal' as const },
-                      ]}
-                      value={el.serverVariant ?? 'single'}
-                      onChange={(v) => updateElement(el.id, { serverVariant: v.value! })}
-                    />
-                  </Field>
-                </>
-              )}
-
-              {/* ── Image ── */}
-              {el.type === 'image' && (
-                <>
-                  <div className={styles.section}>Image</div>
-                  <Field label="Source">
-                    <Select
-                      options={[
-                        { label: 'Inline (paste data)', value: 'inline' as const },
-                        { label: 'From query field', value: 'field' as const },
-                      ]}
-                      value={el.imageSource ?? 'inline'}
-                      onChange={(v) => updateElement(el.id, { imageSource: v.value! })}
-                    />
-                  </Field>
-
-                  {(el.imageSource ?? 'inline') === 'inline' && (
-                    <>
-                      <Field label="Format">
-                        <Select
-                          options={[
-                            { label: 'SVG (text/xml)', value: 'svg+xml' as const },
-                            { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
-                            { label: 'PNG (base64)', value: 'png' as const },
-                            { label: 'JPEG (base64)', value: 'jpeg' as const },
-                            { label: 'GIF (base64)', value: 'gif' as const },
-                            { label: 'WebP (base64)', value: 'webp' as const },
-                          ]}
-                          value={el.imageFormat ?? 'png'}
-                          onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
-                        />
-                      </Field>
-                      <Field
-                        label="Image data"
-                        description={
-                          (el.imageFormat ?? 'png') === 'svg+xml'
-                            ? 'Paste SVG markup'
-                            : 'Paste base64 encoded image data'
-                        }
+      <DragDropContext onDragEnd={onDragEnd}>
+        <Droppable droppableId="elements-list">
+          {(droppableProvided) => (
+            <div ref={droppableProvided.innerRef} {...droppableProvided.droppableProps}>
+              {elements.map((el, index) => (
+                <Draggable key={el.id} draggableId={el.id} index={index}>
+                  {(draggableProvided) => (
+                    <div ref={draggableProvided.innerRef} {...draggableProvided.draggableProps}>
+                      <div
+                        className={styles.row}
+                        onClick={() => setExpandedId(expandedId === el.id ? null : el.id)}
                       >
-                        <TextArea
-                          value={el.imageData ?? ''}
-                          rows={4}
-                          onChange={(e) => updateElement(el.id, { imageData: e.currentTarget.value })}
-                        />
-                      </Field>
-                    </>
-                  )}
+                        <span
+                          className={styles.dragIcon}
+                          {...draggableProvided.dragHandleProps}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Icon name="draggabledots" />
+                        </span>
+                        <span className={styles.rowLabel}>
+                          {el.name} <em style={{ opacity: 0.6 }}>({el.type})</em>
+                        </span>
+                        <div className={styles.actions}>
+                          <IconButton name="copy" size="sm" tooltip="Duplicate element"
+                            onClick={(e) => { e.stopPropagation(); duplicateElement(el.id); }} />
+                          <IconButton name="trash-alt" size="sm" tooltip="Delete element"
+                            onClick={(e) => { e.stopPropagation(); removeElement(el.id); }} />
+                          <IconButton
+                            name={expandedId === el.id ? 'angle-up' : 'angle-down'}
+                            size="sm"
+                            tooltip={expandedId === el.id ? 'Collapse' : 'Expand'}
+                          />
+                        </div>
+                      </div>
 
-                  {el.imageSource === 'field' && (
-                    <>
-                      <Field label="Format" description="MIME type when field value is raw base64 (not a data URL)">
-                        <Select
-                          options={[
-                            { label: 'PNG', value: 'png' as const },
-                            { label: 'JPEG', value: 'jpeg' as const },
-                            { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
-                            { label: 'GIF', value: 'gif' as const },
-                            { label: 'WebP', value: 'webp' as const },
-                          ]}
-                          value={el.imageFormat ?? 'png'}
-                          onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
-                        />
-                      </Field>
-                      <Field label="Field name" description="Query field containing base64 data or a data URL">
-                        <Input
-                          value={el.imageField ?? ''}
-                          onChange={(e) => updateElement(el.id, { imageField: e.currentTarget.value })}
-                        />
-                      </Field>
-                    </>
-                  )}
+                      {expandedId === el.id && (
+                        <div className={styles.elementForm}>
+                          <Field label="Name">
+                            <Input value={el.name} onChange={(e) => updateElement(el.id, { name: e.currentTarget.value })} />
+                          </Field>
 
-                  <Field label="Fit">
-                    <Select
-                      options={[
-                        { label: 'Contain', value: 'contain' as const },
-                        { label: 'Cover', value: 'cover' as const },
-                        { label: 'Fill', value: 'fill' as const },
-                        { label: 'None', value: 'none' as const },
-                      ]}
-                      value={el.imageFit ?? 'contain'}
-                      onChange={(v) => updateElement(el.id, { imageFit: v.value! })}
-                    />
-                  </Field>
-                </>
-              )}
+                          {/* ── Background ── */}
+                          <div className={styles.section}>Background</div>
+                          <ColorConfigEditor
+                            label="Color"
+                            value={el.background.color}
+                            onChange={(c) => updateElement(el.id, { background: { ...el.background, color: c } })}
+                            fieldOptions={fieldOptions}
+                          />
+
+                          {/* ── Border ── */}
+                          <div className={styles.section}>Border</div>
+                          <div className={styles.twoCol}>
+                            <Field label="Width">
+                              <Input type="number" value={el.border.width} width={8}
+                                onChange={(e) => updateElement(el.id, { border: { ...el.border, width: Number(e.currentTarget.value) } })} />
+                            </Field>
+                            <Field label="Radius">
+                              <Input type="number" value={el.border.radius} width={8}
+                                onChange={(e) => updateElement(el.id, { border: { ...el.border, radius: Number(e.currentTarget.value) } })} />
+                            </Field>
+                          </div>
+                          <ColorConfigEditor
+                            label="Color"
+                            value={el.border.color}
+                            onChange={(c) => updateElement(el.id, { border: { ...el.border, color: c } })}
+                            fieldOptions={fieldOptions}
+                          />
+
+                          {/* ── Text ── */}
+                          {el.text && (
+                            <>
+                              <div className={styles.section}>Text</div>
+                              <TextConfigEditor
+                                label="Content"
+                                value={el.text.content}
+                                onChange={(c) => updateElement(el.id, { text: { ...el.text!, content: c } })}
+                                fieldOptions={fieldOptions}
+                              />
+                              <div className={styles.twoCol}>
+                                <Field label="Size px">
+                                  <Input type="number" value={el.text.size} width={8}
+                                    onChange={(e) =>
+                                      updateElement(el.id, { text: { ...el.text!, size: Number(e.currentTarget.value) } })
+                                    }
+                                  />
+                                </Field>
+                                <Field label="Align">
+                                  <Select
+                                    width={10}
+                                    options={[
+                                      { label: 'Left', value: 'left' as const },
+                                      { label: 'Center', value: 'center' as const },
+                                      { label: 'Right', value: 'right' as const },
+                                    ]}
+                                    value={el.text.align}
+                                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, align: v.value! } })}
+                                  />
+                                </Field>
+                              </div>
+                              <div className={styles.twoCol}>
+                                <Field label="Weight">
+                                  <Select
+                                    width={14}
+                                    options={FONT_WEIGHT_OPTIONS}
+                                    value={
+                                      typeof el.text.fontWeight === 'string'
+                                        ? (el.text.fontWeight === 'bold' ? 700 : 400)
+                                        : el.text.fontWeight
+                                    }
+                                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontWeight: v.value! } })}
+                                  />
+                                </Field>
+                                <Field label="Style">
+                                  <Select
+                                    width={10}
+                                    options={[
+                                      { label: 'Normal', value: 'normal' as const },
+                                      { label: 'Italic', value: 'italic' as const },
+                                    ]}
+                                    value={el.text.fontStyle}
+                                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontStyle: v.value! } })}
+                                  />
+                                </Field>
+                              </div>
+                              <ColorConfigEditor
+                                label="Color"
+                                value={el.text.color}
+                                onChange={(c) => updateElement(el.id, { text: { ...el.text!, color: c } })}
+                                fieldOptions={fieldOptions}
+                              />
+                            </>
+                          )}
+
+                          {/* ── Icon ── */}
+                          {el.type === 'icon' && (
+                            <>
+                              <div className={styles.section}>Icon</div>
+                              <Field label="Icon name" description="Any @grafana/ui icon name">
+                                <Input value={el.iconName ?? ''}
+                                  onChange={(e) => updateElement(el.id, { iconName: e.currentTarget.value })} />
+                              </Field>
+                              <ColorConfigEditor
+                                label="Color"
+                                value={el.iconColor ?? { mode: 'fixed', value: '#ffffff' }}
+                                onChange={(c) => updateElement(el.id, { iconColor: c })}
+                                fieldOptions={fieldOptions}
+                              />
+                            </>
+                          )}
+
+                          {/* ── Server ── */}
+                          {el.type === 'server' && (
+                            <>
+                              <div className={styles.section}>Server</div>
+                              <Field label="Variant">
+                                <Select
+                                  options={[
+                                    { label: 'Single', value: 'single' as const },
+                                    { label: 'Stack', value: 'stack' as const },
+                                    { label: 'Database', value: 'database' as const },
+                                    { label: 'Terminal', value: 'terminal' as const },
+                                  ]}
+                                  value={el.serverVariant ?? 'single'}
+                                  onChange={(v) => updateElement(el.id, { serverVariant: v.value! })}
+                                />
+                              </Field>
+                              <ColorConfigEditor
+                                label="Status color"
+                                value={el.statusColor ?? { mode: 'fixed', value: '#73bf69' }}
+                                onChange={(c) => updateElement(el.id, { statusColor: c })}
+                                fieldOptions={fieldOptions}
+                              />
+                            </>
+                          )}
+
+                          {/* ── Image ── */}
+                          {el.type === 'image' && (
+                            <>
+                              <div className={styles.section}>Image</div>
+                              <Field label="Source">
+                                <Select
+                                  options={[
+                                    { label: 'Inline (paste data)', value: 'inline' as const },
+                                    { label: 'From query field', value: 'field' as const },
+                                  ]}
+                                  value={el.imageSource ?? 'inline'}
+                                  onChange={(v) => updateElement(el.id, { imageSource: v.value! })}
+                                />
+                              </Field>
+
+                              {(el.imageSource ?? 'inline') === 'inline' && (
+                                <>
+                                  <Field label="Format">
+                                    <Select
+                                      options={[
+                                        { label: 'SVG (text/xml)', value: 'svg+xml' as const },
+                                        { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
+                                        { label: 'PNG (base64)', value: 'png' as const },
+                                        { label: 'JPEG (base64)', value: 'jpeg' as const },
+                                        { label: 'GIF (base64)', value: 'gif' as const },
+                                        { label: 'WebP (base64)', value: 'webp' as const },
+                                      ]}
+                                      value={el.imageFormat ?? 'png'}
+                                      onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
+                                    />
+                                  </Field>
+                                  <Field
+                                    label="Image data"
+                                    description={
+                                      (el.imageFormat ?? 'png') === 'svg+xml'
+                                        ? 'Paste SVG markup'
+                                        : 'Paste base64 encoded image data'
+                                    }
+                                  >
+                                    <TextArea
+                                      value={el.imageData ?? ''}
+                                      rows={4}
+                                      onChange={(e) => updateElement(el.id, { imageData: e.currentTarget.value })}
+                                    />
+                                  </Field>
+                                </>
+                              )}
+
+                              {el.imageSource === 'field' && (
+                                <>
+                                  <Field label="Format" description="MIME type when field value is raw base64 (not a data URL)">
+                                    <Select
+                                      options={[
+                                        { label: 'PNG', value: 'png' as const },
+                                        { label: 'JPEG', value: 'jpeg' as const },
+                                        { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
+                                        { label: 'GIF', value: 'gif' as const },
+                                        { label: 'WebP', value: 'webp' as const },
+                                      ]}
+                                      value={el.imageFormat ?? 'png'}
+                                      onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
+                                    />
+                                  </Field>
+                                  <Field label="Field name" description="Query field containing base64 data or a data URL">
+                                    <Select
+                                      options={fieldOptions}
+                                      value={el.imageField ?? null}
+                                      placeholder="Select field…"
+                                      isClearable
+                                      onChange={(v) => updateElement(el.id, { imageField: v?.value ?? '' })}
+                                    />
+                                  </Field>
+                                </>
+                              )}
+
+                              <Field label="Fit">
+                                <Select
+                                  options={[
+                                    { label: 'Contain', value: 'contain' as const },
+                                    { label: 'Cover', value: 'cover' as const },
+                                    { label: 'Fill', value: 'fill' as const },
+                                    { label: 'None', value: 'none' as const },
+                                  ]}
+                                  value={el.imageFit ?? 'contain'}
+                                  onChange={(v) => updateElement(el.id, { imageFit: v.value! })}
+                                />
+                              </Field>
+                            </>
+                          )}
+
+                          {/* ── Metric Value ── */}
+                          {el.type === 'metric-value' && (
+                            <>
+                              <div className={styles.section}>Metric Value</div>
+                              <Field label="Field name" description="Query field whose last value is displayed">
+                                <Select
+                                  options={fieldOptions}
+                                  value={el.metricField ?? null}
+                                  placeholder="Select field…"
+                                  isClearable
+                                  onChange={(v) => updateElement(el.id, { metricField: v?.value ?? '' })}
+                                />
+                              </Field>
+                              <div className={styles.twoCol}>
+                                <Field label="Value size px">
+                                  <Input
+                                    type="number"
+                                    value={el.metricValueSize ?? 32}
+                                    width={8}
+                                    onChange={(e) => updateElement(el.id, { metricValueSize: Number(e.currentTarget.value) })}
+                                  />
+                                </Field>
+                                <Field label="Label position">
+                                  <Select
+                                    width={10}
+                                    options={[
+                                      { label: 'Top', value: 'top' as const },
+                                      { label: 'Bottom', value: 'bottom' as const },
+                                    ]}
+                                    value={el.metricLabelPosition ?? 'bottom'}
+                                    onChange={(v) => updateElement(el.id, { metricLabelPosition: v.value! })}
+                                  />
+                                </Field>
+                              </div>
+                              <div className={styles.twoCol}>
+                                <Field label="Value weight">
+                                  <Select
+                                    width={14}
+                                    options={FONT_WEIGHT_OPTIONS}
+                                    value={el.metricValueWeight ?? 700}
+                                    onChange={(v) => updateElement(el.id, { metricValueWeight: v.value! })}
+                                  />
+                                </Field>
+                                <Field label="Value style">
+                                  <Select
+                                    width={10}
+                                    options={[
+                                      { label: 'Normal', value: 'normal' as const },
+                                      { label: 'Italic', value: 'italic' as const },
+                                    ]}
+                                    value={el.metricValueStyle ?? 'normal'}
+                                    onChange={(v) => updateElement(el.id, { metricValueStyle: v.value! })}
+                                  />
+                                </Field>
+                              </div>
+                              <ColorConfigEditor
+                                label="Value color"
+                                value={el.metricValueColor ?? { mode: 'thresholds' }}
+                                onChange={(c) => updateElement(el.id, { metricValueColor: c })}
+                                fieldOptions={fieldOptions}
+                              />
+                            </>
+                          )}
+
+                          {/* ── Layout ── */}
+                          <div className={styles.section}>Layout</div>
+                          <QuickPlacement el={el} onUpdate={(p) => updateElement(el.id, p)} />
+
+                          <div className={styles.twoCol} style={{ marginTop: 8 }}>
+                            <Field label="Horizontal">
+                              <Select
+                                width={14}
+                                options={H_CONSTRAINT_OPTIONS}
+                                value={el.constraint.horizontal}
+                                onChange={(v) =>
+                                  updateElement(el.id, { constraint: { ...el.constraint, horizontal: v.value! } })
+                                }
+                              />
+                            </Field>
+                            <Field label="Vertical">
+                              <Select
+                                width={14}
+                                options={V_CONSTRAINT_OPTIONS}
+                                value={el.constraint.vertical}
+                                onChange={(v) =>
+                                  updateElement(el.id, { constraint: { ...el.constraint, vertical: v.value! } })
+                                }
+                              />
+                            </Field>
+                          </div>
+
+                          <PositionFields el={el} onUpdate={(p) => updateElement(el.id, p)} />
+
+                          <div className={styles.twoCol}>
+                            <Field label="Width">
+                              <Input type="number" value={el.placement.width} width={8}
+                                onChange={(e) =>
+                                  updateElement(el.id, { placement: { ...el.placement, width: Number(e.currentTarget.value) } })
+                                }
+                              />
+                            </Field>
+                            <Field label="Height">
+                              <Input type="number" value={el.placement.height} width={8}
+                                onChange={(e) =>
+                                  updateElement(el.id, { placement: { ...el.placement, height: Number(e.currentTarget.value) } })
+                                }
+                              />
+                            </Field>
+                          </div>
+                          <Field label="Rotation °">
+                            <Input type="number" value={el.placement.rotation}
+                              onChange={(e) =>
+                                updateElement(el.id, { placement: { ...el.placement, rotation: Number(e.currentTarget.value) } })
+                              }
+                            />
+                          </Field>
+                          <div className={styles.twoCol}>
+                            <Field label="Z-Index">
+                              <Input type="number" value={el.zIndex} width={8}
+                                onChange={(e) => updateElement(el.id, { zIndex: Number(e.currentTarget.value) })} />
+                            </Field>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Draggable>
+              ))}
+              {droppableProvided.placeholder}
             </div>
           )}
-        </div>
-      ))}
+        </Droppable>
+      </DragDropContext>
 
       <div className={styles.addRow}>
         <Select options={ELEMENT_TYPES} value={newType}

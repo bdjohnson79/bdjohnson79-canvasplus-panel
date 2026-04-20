@@ -68,10 +68,22 @@ export function resolveColor(
     }
 
     const raw = getLastValue(field);
-    if (raw === null || typeof raw !== 'number') {
+    if (raw === null) {
       return fallback;
     }
 
+    if (field.display) {
+      const display = field.display(typeof raw === 'number' ? raw : Number(raw));
+      const color = display.color;
+      if (color) {
+        return theme.visualization.getColorByName(color) ?? color;
+      }
+      return fallback;
+    }
+
+    if (typeof raw !== 'number') {
+      return fallback;
+    }
     return thresholdColor(field, raw, theme);
   }
 
@@ -86,8 +98,14 @@ export function resolveText(cfg: { mode: 'fixed'; value: string } | { mode: 'fie
   if (!field) {
     return '';
   }
-  const val = getLastValue(field);
-  return val !== null ? String(val) : '';
+  const raw = getLastValue(field);
+  if (raw === null) {
+    return '';
+  }
+  if (field.display) {
+    return field.display(typeof raw === 'number' ? raw : String(raw)).text;
+  }
+  return String(raw);
 }
 
 export function resolveImageSrc(element: CanvasElement, series: DataFrame[]): string {
