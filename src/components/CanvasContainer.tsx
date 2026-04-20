@@ -1,12 +1,28 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { EventBus, FieldConfigSource, GrafanaTheme2, InterpolateFunction, PanelData } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
-import { CanvasElement, CanvasConnection, CanvasOptions, PixelRect } from '../types';
+import { AnchorPoint, CanvasConnection, CanvasElement, CanvasOptions, PixelRect } from '../types';
 import { resolvePixelRect } from '../utils/placement';
 import { ElementRegistry } from './elements';
 import { useDataBinding } from './hooks/useDataBinding';
-import { ConnectionLayer } from './ConnectionLayer';
+import { ConnectionLayer, anchorPixel, ALL_ANCHORS } from './ConnectionLayer';
+import { ConnectionAnchors } from './ConnectionAnchors';
 import { DragLayer } from './editor/DragLayer';
+import { CanvasElementSelectedEvent } from '../events';
+import { v4 as uuidv4 } from '../utils/uuid';
+
+// ── Nearest anchor helper ─────────────────────────────────────────────────────
+
+function nearestAnchor(rect: PixelRect, x: number, y: number): AnchorPoint {
+  let best: AnchorPoint = 'n';
+  let bestDist = Infinity;
+  for (const anchor of ALL_ANCHORS) {
+    const pt = anchorPixel(rect, anchor);
+    const d = Math.hypot(pt.x - x, pt.y - y);
+    if (d < bestDist) { bestDist = d; best = anchor; }
+  }
+  return best;
+}
 
 // ── Edit context ──────────────────────────────────────────────────────────────
 
@@ -15,6 +31,11 @@ interface EditContextValue {
   setSelectedId: (id: string | null) => void;
   updateElement: (id: string, partial: Partial<CanvasElement>) => void;
   updateConnection: (id: string, partial: Partial<CanvasConnection>) => void;
+  deleteElement: (id: string) => void;
+  duplicateElement: (id: string) => void;
+  moveToTop: (id: string) => void;
+  moveToBottom: (id: string) => void;
+  requestEdit: (id: string) => void;
 }
 
 const CanvasEditContext = createContext<EditContextValue | null>(null);
@@ -36,6 +57,9 @@ interface ElementWrapperProps {
   panelWidth: number;
   panelHeight: number;
   canvasRef: React.RefObject<HTMLDivElement>;
+  eventBus: EventBus;
+  onHoverChange: (id: string | null) => void;
+  onAnchorMouseDown: (elementId: string, anchor: AnchorPoint, clientX: number, clientY: number) => void;
 }
 
 const ElementWrapper: React.FC<ElementWrapperProps> = ({
@@ -49,9 +73,13 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
   panelWidth,
   panelHeight,
   canvasRef,
+  eventBus,
+  onHoverChange,
+  onAnchorMouseDown,
 }) => {
   const ctx = useCanvasEdit();
   const resolved = useDataBinding(element, data, fieldConfig, theme);
+  const [showAnchors, setShowAnchors] = useState(false);
   const Component = ElementRegistry[element.type];
 
   const handleClick = useCallback(
@@ -59,6 +87,7 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
       if (editMode) {
         e.stopPropagation();
         ctx?.setSelectedId(element.id);
+        eventBus.publish(new CanvasElementSelectedEvent({ elementId: element.id }));
         return;
       }
 
@@ -85,7 +114,7 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
         }
       }
     },
-    [editMode, ctx, element, data.series]
+    [editMode, ctx, element, data.series, eventBus]
   );
 
   return (
@@ -103,8 +132,29 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
           cursor: editMode ? 'pointer' : 'default',
         }}
         onClick={handleClick}
+        onMouseEnter={() => {
+          if (editMode) {
+            onHoverChange(element.id);
+            setShowAnchors(true);
+          }
+        }}
+        onMouseLeave={() => {
+          if (editMode) {
+            onHoverChange(null);
+            setShowAnchors(false);
+          }
+        }}
       >
         <Component element={element} resolved={resolved} isSelected={isSelected} editMode={editMode} />
+
+        {/* Anchor X overlay — only shown on hover; hidden when selected or cursor leaves 30px buffer */}
+        {editMode && !isSelected && showAnchors && (
+          <ConnectionAnchors
+            onAnchorMouseDown={(anchor, clientX, clientY) =>
+              onAnchorMouseDown(element.id, anchor, clientX, clientY)
+            }
+          />
+        )}
       </div>
 
       {editMode && isSelected && ctx && (
@@ -143,11 +193,59 @@ export const CanvasContainer: React.FC<Props> = ({
   width,
   height,
   onOptionsChange,
+  eventBus,
 }) => {
   const theme = useTheme2();
   const canvasRef = useRef<HTMLDivElement>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
+  const [hoveredElementId, setHoveredElementId] = useState<string | null>(null);
+
+  // Connection drag state — tracks a connection being drawn via mousedown+drag
+  const [drawingConn, setDrawingConn] = useState<{
+    sourceId: string;
+    sourceAnchor: AnchorPoint;
+    x2: number;
+    y2: number;
+    startClientX: number;
+    startClientY: number;
+  } | null>(null);
+
+
+  // Subscribe to selection events from the sidebar editor
+  useEffect(() => {
+    const sub = eventBus.subscribe(CanvasElementSelectedEvent, (event) => {
+      setSelectedId(event.payload.elementId);
+    });
+    return () => sub.unsubscribe();
+  }, [eventBus]);
+
+  // ESC cancels an in-progress connection drag or clears selection
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDrawingConn(null);
+        setSelectedId(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // Delete key removes the selected connection
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Delete' && selectedConnectionId) {
+        onOptionsChange({
+          ...options,
+          connections: options.connections.filter((c) => c.id !== selectedConnectionId),
+        });
+        setSelectedConnectionId(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedConnectionId, options, onOptionsChange]);
 
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -176,18 +274,103 @@ export const CanvasContainer: React.FC<Props> = ({
     [options, onOptionsChange]
   );
 
+  const deleteElement = useCallback(
+    (id: string) => {
+      onOptionsChange({
+        ...options,
+        elements: options.elements.filter((el) => el.id !== id),
+        connections: options.connections.filter((c) => c.sourceId !== id && c.targetId !== id),
+      });
+      setSelectedId(null);
+    },
+    [options, onOptionsChange]
+  );
+
+  const duplicateElement = useCallback(
+    (id: string) => {
+      const source = options.elements.find((el) => el.id === id);
+      if (!source) { return; }
+      const zIndex = options.elements.length > 0 ? Math.max(...options.elements.map((e) => e.zIndex)) + 1 : 1;
+      const copy: CanvasElement = {
+        ...source,
+        id: uuidv4(),
+        name: `${source.name}-copy`,
+        zIndex,
+        placement: { ...source.placement, top: source.placement.top + 5, left: source.placement.left + 5 },
+      };
+      onOptionsChange({ ...options, elements: [...options.elements, copy] });
+    },
+    [options, onOptionsChange]
+  );
+
+  const moveToTop = useCallback(
+    (id: string) => {
+      const maxZ = options.elements.length > 0 ? Math.max(...options.elements.map((e) => e.zIndex)) : 0;
+      onOptionsChange({
+        ...options,
+        elements: options.elements.map((el) => (el.id === id ? { ...el, zIndex: maxZ + 1 } : el)),
+      });
+    },
+    [options, onOptionsChange]
+  );
+
+  const moveToBottom = useCallback(
+    (id: string) => {
+      onOptionsChange({
+        ...options,
+        elements: options.elements.map((el) =>
+          el.id === id ? { ...el, zIndex: 0 } : { ...el, zIndex: el.zIndex + 1 }
+        ),
+      });
+    },
+    [options, onOptionsChange]
+  );
+
+  const requestEdit = useCallback(
+    (id: string) => {
+      eventBus.publish(new CanvasElementSelectedEvent({ elementId: id }));
+    },
+    [eventBus]
+  );
+
+  // ── connection drawing ──────────────────────────────────────────────────────
+
+  // Called by ConnectionAnchors when user presses mouse button on an anchor X
+  const handleAnchorMouseDown = useCallback(
+    (elementId: string, anchor: AnchorPoint, clientX: number, clientY: number) => {
+      const rect = canvasRef.current?.getBoundingClientRect();
+      if (!rect) { return; }
+      const x = (clientX - rect.left - pan.x) / zoom;
+      const y = (clientY - rect.top  - pan.y) / zoom;
+      setDrawingConn({
+        sourceId: elementId,
+        sourceAnchor: anchor,
+        x2: x,
+        y2: y,
+        startClientX: clientX,
+        startClientY: clientY,
+      });
+    },
+    [pan, zoom]
+  );
+
   const editCtx: EditContextValue = {
     selectedId,
     setSelectedId,
     updateElement,
     updateConnection,
+    deleteElement,
+    duplicateElement,
+    moveToTop,
+    moveToBottom,
+    requestEdit,
   };
 
-  // ── pan/zoom handlers ───────────────────────────────────────────────────────
+  // ── pan/zoom + connection drag handlers ─────────────────────────────────────
 
   const onWheel = useCallback(
     (e: React.WheelEvent) => {
-      if (!options.panZoom) {return;}
+      if (!options.panZoom) { return; }
       e.preventDefault();
       setZoom((z) => Math.min(4, Math.max(0.25, z - e.deltaY * 0.001)));
     },
@@ -196,7 +379,7 @@ export const CanvasContainer: React.FC<Props> = ({
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (!options.panZoom || e.button !== 1) {return;}
+      if (!options.panZoom || e.button !== 1) { return; }
       isPanning.current = true;
       panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
     },
@@ -205,15 +388,65 @@ export const CanvasContainer: React.FC<Props> = ({
 
   const onMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!isPanning.current) {return;}
-      setPan({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y });
+      if (isPanning.current) {
+        setPan({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y });
+      }
+      if (drawingConn) {
+        const rect = canvasRef.current?.getBoundingClientRect();
+        if (rect) {
+          const x = (e.clientX - rect.left - pan.x) / zoom;
+          const y = (e.clientY - rect.top  - pan.y) / zoom;
+          setDrawingConn((d) => d ? { ...d, x2: x, y2: y } : null);
+        }
+      }
     },
-    []
+    [drawingConn, pan, zoom]
   );
 
-  const onMouseUp = useCallback(() => {
-    isPanning.current = false;
-  }, []);
+  const onMouseUp = useCallback(
+    (e: React.MouseEvent) => {
+      isPanning.current = false;
+
+      if (!drawingConn) { return; }
+
+      const dist = Math.hypot(
+        e.clientX - drawingConn.startClientX,
+        e.clientY - drawingConn.startClientY
+      );
+
+      if (dist >= 8 && hoveredElementId && hoveredElementId !== drawingConn.sourceId) {
+        const targetEl = options.elements.find((el) => el.id === hoveredElementId);
+        if (targetEl) {
+          const targetRect = resolvePixelRect(targetEl.placement, targetEl.constraint, width, height);
+          const canvasRect = canvasRef.current!.getBoundingClientRect();
+          const cx = (e.clientX - canvasRect.left - pan.x) / zoom;
+          const cy = (e.clientY - canvasRect.top  - pan.y) / zoom;
+          const targetAnchor = nearestAnchor(targetRect, cx, cy);
+          onOptionsChange({
+            ...options,
+            connections: [
+              ...options.connections,
+              {
+                id: uuidv4(),
+                sourceId: drawingConn.sourceId,
+                sourceAnchor: drawingConn.sourceAnchor,
+                targetId: hoveredElementId,
+                targetAnchor,
+                color: { mode: 'fixed', value: theme.colors.text.secondary },
+                width: 2,
+                lineStyle: 'solid',
+                arrowDirection: 'forward',
+                animated: false,
+              },
+            ],
+          });
+        }
+      }
+
+      setDrawingConn(null);
+    },
+    [drawingConn, hoveredElementId, options, width, height, onOptionsChange, pan, zoom, theme]
+  );
 
   // ── resolve pixel rects for all elements ────────────────────────────────────
 
@@ -236,11 +469,13 @@ export const CanvasContainer: React.FC<Props> = ({
           background: options.background.color || 'transparent',
           backgroundImage: options.background.image ? `url(${options.background.image})` : undefined,
           backgroundSize: 'cover',
+          cursor: drawingConn ? 'crosshair' : undefined,
         }}
         onClick={() => {
           if (options.inlineEditing) {
             setSelectedId(null);
             setSelectedConnectionId(null);
+            setDrawingConn(null);
           }
         }}
         onWheel={onWheel}
@@ -276,13 +511,15 @@ export const CanvasContainer: React.FC<Props> = ({
                 panelWidth={width}
                 panelHeight={height}
                 canvasRef={canvasRef}
+                eventBus={eventBus}
+                onHoverChange={setHoveredElementId}
+                onAnchorMouseDown={handleAnchorMouseDown}
               />
             );
           })}
 
           <ConnectionLayer
             connections={options.connections}
-            elements={options.elements}
             rectMap={rectMap}
             width={width}
             height={height}
@@ -291,6 +528,7 @@ export const CanvasContainer: React.FC<Props> = ({
             editMode={options.inlineEditing}
             selectedConnectionId={selectedConnectionId ?? undefined}
             onSelectConnection={setSelectedConnectionId}
+            drawingConn={drawingConn}
           />
         </div>
       </div>

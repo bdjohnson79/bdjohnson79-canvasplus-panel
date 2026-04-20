@@ -6,7 +6,7 @@ export type ElementType =
   | 'server'
   | 'cloud'
   | 'triangle'
-  | 'parallelogram'
+  | 'block-arrow'
   | 'image'
   | 'metric-value';
 
@@ -83,7 +83,11 @@ export interface CanvasElement {
   zIndex: number;
 }
 
-export type AnchorPoint = 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | 'nw' | 'c';
+export type AnchorPoint =
+  | 'nw' | 'n1' | 'n' | 'n2' | 'ne'   // top edge, left→right
+  | 'e1' | 'e' | 'e2'                   // right edge, top→bottom
+  | 'se' | 's2' | 's' | 's1' | 'sw'    // bottom edge, right→left
+  | 'w1' | 'w' | 'w2';                  // left edge, top→bottom
 
 export type LineStyle = 'solid' | 'dashed' | 'dotted';
 export type ArrowDirection = 'none' | 'forward' | 'backward' | 'both';

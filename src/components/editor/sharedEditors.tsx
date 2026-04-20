@@ -1,5 +1,5 @@
 import React from 'react';
-import { ColorPickerInput, Field, Input, Select } from '@grafana/ui';
+import { ColorPicker, Field, Input, Select } from '@grafana/ui';
 import { ColorConfig, TextConfig } from '../../types';
 
 export type FieldOptions = Array<{ label: string; value: string }>;
@@ -24,7 +24,7 @@ interface ColorConfigEditorProps {
 
 export const ColorConfigEditor: React.FC<ColorConfigEditorProps> = ({ label, value, onChange, fieldOptions }) => (
   <Field label={label}>
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
       <Select
         width={16}
         options={COLOR_MODE_OPTIONS}
@@ -36,10 +36,26 @@ export const ColorConfigEditor: React.FC<ColorConfigEditorProps> = ({ label, val
         }}
       />
       {value.mode === 'fixed' && (
-        <ColorPickerInput
-          value={value.value}
+        <ColorPicker
+          color={value.value}
           onChange={(c) => onChange({ mode: 'fixed', value: c })}
-        />
+        >
+          {({ ref, showColorPicker }) => (
+            <div
+              ref={ref}
+              onClick={showColorPicker}
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: '50%',
+                backgroundColor: value.value,
+                cursor: 'pointer',
+                border: '1px solid rgba(128,128,128,0.4)',
+                flexShrink: 0,
+              }}
+            />
+          )}
+        </ColorPicker>
       )}
       {value.mode === 'field' && (
         <Select

@@ -16,7 +16,7 @@ import { IconElement } from './IconElement';
 import { ServerElement } from './ServerElement';
 import { CloudElement } from './CloudElement';
 import { TriangleElement } from './TriangleElement';
-import { ParallelogramElement } from './ParallelogramElement';
+import { BlockArrowElement } from './BlockArrowElement';
 import { ImageElement } from './ImageElement';
 import { MetricValueElement } from './MetricValueElement';
 
@@ -28,7 +28,7 @@ export const ElementRegistry: Record<ElementType, React.FC<ElementProps>> = {
   server: ServerElement,
   cloud: CloudElement,
   triangle: TriangleElement,
-  parallelogram: ParallelogramElement,
+  'block-arrow': BlockArrowElement,
   image: ImageElement,
   'metric-value': MetricValueElement,
 };

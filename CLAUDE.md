@@ -50,6 +50,14 @@ The plugin is a pure frontend panel plugin (no backend). Entry point is `src/mod
 - Unit tests: Jest + `@testing-library/react`, configured via `.config/jest.config` (extended in `jest.config.js`)
 - E2E tests: Playwright + `@grafana/plugin-e2e` in `tests/panel.spec.ts`; provisioned dashboards/datasources live in `provisioning/`
 
+## Behavioral contract — match the stock Canvas panel
+
+**CanvasPlus must look and behave identically to the stock Grafana Canvas panel for all existing canvas features** (element selection, move, resize, connections, anchor dots, tooltips, context menus). New features requested by the user are additions on top of that baseline — they must not change how existing features feel or work.
+
+Before implementing any canvas interaction, read @./.config/AGENTS/stock-canvas-panel.md — it contains a detailed summary of how the stock panel works (DOM architecture, pointer-event model, connection creation flow, z-index hierarchy). Do **not** re-fetch the Grafana source unless researching something not covered in that document.
+
+Do not invent interaction patterns. If something feels unclear, check the stock panel reference first.
+
 ## Documentation
 
 - Grafana plugin docs index: https://grafana.com/developers/plugin-tools/llms.txt

@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { GrafanaTheme2, StandardEditorProps } from '@grafana/data';
-import { Button, Field, Icon, IconButton, Input, Select, TextArea, Tooltip, useStyles2 } from '@grafana/ui';
+import { CanvasElementSelectedEvent } from '../../events';
+import { Button, Field, Icon, IconButton, Input, Select, TextArea, Tooltip, getAvailableIcons, useStyles2, useTheme2 } from '@grafana/ui';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { css } from '@emotion/css';
 import {
@@ -25,7 +26,7 @@ const ELEMENT_TYPES: Array<{ label: string; value: ElementType }> = [
   { label: 'Server', value: 'server' },
   { label: 'Cloud', value: 'cloud' },
   { label: 'Triangle', value: 'triangle' },
-  { label: 'Parallelogram', value: 'parallelogram' },
+  { label: 'Block Arrow', value: 'block-arrow' },
   { label: 'Image', value: 'image' },
   { label: 'Metric Value', value: 'metric-value' },
 ];
@@ -121,6 +122,9 @@ function defaultElement(type: ElementType, zIndex: number): CanvasElement {
     base.serverVariant = 'single';
     base.statusColor = { mode: 'fixed', value: '#73bf69' };
     base.placement = defaultPlacement(80, 100);
+  }
+  if (type === 'block-arrow') {
+    base.placement = defaultPlacement(120, 60);
   }
   if (type === 'image') {
     base.imageSource = 'inline';
@@ -271,6 +275,126 @@ const PositionFields: React.FC<PositionFieldsProps> = ({ el, onUpdate }) => {
   );
 };
 
+// ── Icon picker ───────────────────────────────────────────────────────────────
+
+interface IconPickerProps {
+  value: string;
+  onChange: (name: string) => void;
+}
+
+const IconPickerField: React.FC<IconPickerProps> = ({ value, onChange }) => {
+  const theme = useTheme2();
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  const allIcons = useMemo(() => getAvailableIcons(), []);
+  const filtered = useMemo(
+    () => (search ? allIcons.filter((n) => String(n).includes(search.toLowerCase())) : allIcons),
+    [allIcons, search]
+  );
+
+  useEffect(() => {
+    if (!open) { return; }
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '5px 8px',
+          background: theme.colors.background.secondary,
+          border: `1px solid ${theme.colors.border.medium}`,
+          borderRadius: theme.shape.radius.default,
+          cursor: 'pointer',
+          color: theme.colors.text.primary,
+          width: '100%',
+          fontSize: theme.typography.bodySmall.fontSize,
+        }}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name={value as any} />
+        <span style={{ flex: 1, textAlign: 'left' }}>{value}</span>
+        <Icon name={open ? 'angle-up' : 'angle-down'} />
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 9999,
+            width: 300,
+            background: theme.colors.background.primary,
+            border: `1px solid ${theme.colors.border.medium}`,
+            borderRadius: theme.shape.radius.default,
+            boxShadow: theme.shadows.z3,
+            top: '100%',
+            left: 0,
+            marginTop: 2,
+          }}
+        >
+          <div style={{ padding: '8px 8px 4px' }}>
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.currentTarget.value)}
+              placeholder="Search icons…"
+              prefix={<Icon name="search" />}
+              autoFocus
+            />
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(8, 1fr)',
+              gap: 2,
+              maxHeight: 260,
+              overflowY: 'auto',
+              padding: '4px 8px 8px',
+            }}
+          >
+            {filtered.slice(0, 300).map((name) => (
+              <div
+                key={name}
+                title={String(name)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 6,
+                  borderRadius: 3,
+                  cursor: 'pointer',
+                  background: name === value ? theme.colors.primary.transparent : 'transparent',
+                  color: theme.colors.text.primary,
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLDivElement).style.background = theme.colors.action.hover;
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLDivElement).style.background =
+                    name === value ? theme.colors.primary.transparent : 'transparent';
+                }}
+                onClick={() => { onChange(String(name)); setOpen(false); setSearch(''); }}
+              >
+                <Icon name={name as any} size="lg" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 const getStyles = (theme: GrafanaTheme2) => ({
@@ -281,6 +405,10 @@ const getStyles = (theme: GrafanaTheme2) => ({
     padding: ${theme.spacing(0.5)} 0;
     border-bottom: 1px solid ${theme.colors.border.weak};
     cursor: pointer;
+  `,
+  rowSelected: css`
+    border-left: 2px solid ${theme.colors.primary.border};
+    padding-left: ${theme.spacing(0.5)};
   `,
   rowLabel: css`
     font-size: ${theme.typography.bodySmall.fontSize};
@@ -333,6 +461,13 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [newType, setNewType] = useState<ElementType>('rectangle');
 
+  useEffect(() => {
+    const sub = context.eventBus?.subscribe(CanvasElementSelectedEvent, (event) => {
+      setExpandedId(event.payload.elementId);
+    });
+    return () => sub?.unsubscribe();
+  }, [context.eventBus]);
+
   const fieldOptions = useMemo(() => {
     const seen = new Set<string>();
     const opts: Array<{ label: string; value: string }> = [];
@@ -359,13 +494,22 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
     const source = elements.find((el) => el.id === id);
     if (!source) { return; }
     const zIndex = elements.length > 0 ? Math.max(...elements.map((e) => e.zIndex)) + 1 : 1;
-    const copy = { ...source, id: uuidv4(), name: `${source.name}-copy`, zIndex };
+    const copy: CanvasElement = {
+      ...source,
+      id: uuidv4(),
+      name: `${source.name}-copy`,
+      zIndex,
+      placement: { ...source.placement, top: source.placement.top + 5, left: source.placement.left + 5 },
+    };
     onChange([...elements, copy]);
+    context.eventBus?.publish(new CanvasElementSelectedEvent({ elementId: copy.id }));
   };
 
   const addElement = () => {
     const zIndex = elements.length > 0 ? Math.max(...elements.map((e) => e.zIndex)) + 1 : 1;
-    onChange([...elements, defaultElement(newType, zIndex)]);
+    const newEl = defaultElement(newType, zIndex);
+    onChange([...elements, newEl]);
+    context.eventBus?.publish(new CanvasElementSelectedEvent({ elementId: newEl.id }));
   };
 
   const onDragEnd = (result: DropResult) => {
@@ -388,8 +532,12 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
                   {(draggableProvided) => (
                     <div ref={draggableProvided.innerRef} {...draggableProvided.draggableProps}>
                       <div
-                        className={styles.row}
-                        onClick={() => setExpandedId(expandedId === el.id ? null : el.id)}
+                        className={`${styles.row}${expandedId === el.id ? ` ${styles.rowSelected}` : ''}`}
+                        onClick={() => {
+                          const next = expandedId === el.id ? null : el.id;
+                          setExpandedId(next);
+                          context.eventBus?.publish(new CanvasElementSelectedEvent({ elementId: next }));
+                        }}
                       >
                         <span
                           className={styles.dragIcon}
@@ -489,7 +637,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
                                         ? (el.text.fontWeight === 'bold' ? 700 : 400)
                                         : el.text.fontWeight
                                     }
-                                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontWeight: v.value! } })}
+                                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontWeight: Number(v.value!) } })}
                                   />
                                 </Field>
                                 <Field label="Style">
@@ -517,9 +665,11 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
                           {el.type === 'icon' && (
                             <>
                               <div className={styles.section}>Icon</div>
-                              <Field label="Icon name" description="Any @grafana/ui icon name">
-                                <Input value={el.iconName ?? ''}
-                                  onChange={(e) => updateElement(el.id, { iconName: e.currentTarget.value })} />
+                              <Field label="Icon">
+                                <IconPickerField
+                                  value={el.iconName ?? 'question-circle'}
+                                  onChange={(name) => updateElement(el.id, { iconName: name })}
+                                />
                               </Field>
                               <ColorConfigEditor
                                 label="Color"
@@ -685,7 +835,7 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
                                     width={14}
                                     options={FONT_WEIGHT_OPTIONS}
                                     value={el.metricValueWeight ?? 700}
-                                    onChange={(v) => updateElement(el.id, { metricValueWeight: v.value! })}
+                                    onChange={(v) => updateElement(el.id, { metricValueWeight: Number(v.value!) })}
                                   />
                                 </Field>
                                 <Field label="Value style">

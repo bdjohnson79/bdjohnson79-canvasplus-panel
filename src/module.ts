@@ -2,7 +2,6 @@ import { FieldConfigProperty, PanelPlugin } from '@grafana/data';
 import { CanvasOptions } from './types';
 import { CanvasPanel } from './components/CanvasPanel';
 import { ElementsEditor } from './components/editor/ElementsEditor';
-import { ConnectionsEditor } from './components/editor/ConnectionsEditor';
 
 const defaultOptions: Partial<CanvasOptions> = {
   elements: [],
@@ -54,14 +53,6 @@ export const plugin = new PanelPlugin<CanvasOptions>(CanvasPanel)
         description: 'Add and configure canvas elements',
         defaultValue: [],
         editor: ElementsEditor,
-      })
-      .addCustomEditor({
-        id: 'connections',
-        path: 'connections',
-        name: 'Connections',
-        description: 'Draw arrows between elements',
-        defaultValue: [],
-        editor: ConnectionsEditor,
       })
   )
   .setDefaults(defaultOptions as CanvasOptions);

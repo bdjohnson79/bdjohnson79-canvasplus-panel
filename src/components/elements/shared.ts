@@ -22,7 +22,7 @@ export function textStyle(element: CanvasElement, resolved: ResolvedStyle): CSSP
   const rawWeight = element.text.fontWeight as number | string;
   const fontWeight =
     typeof rawWeight === 'string'
-      ? rawWeight === 'bold' ? 700 : 400
+      ? rawWeight === 'bold' ? 700 : (Number(rawWeight) || 400)
       : rawWeight;
   return {
     fontSize: element.text.size,

@@ -1,6 +1,8 @@
-import React, { useRef, useCallback } from 'react';
+import React, { useRef, useCallback, useEffect, useState } from 'react';
+import { useTheme2, IconButton } from '@grafana/ui';
 import { CanvasElement, PixelRect } from '../../types';
 import { pixelToPlacement } from '../../utils/placement';
+import { useCanvasEdit } from '../CanvasContainer';
 
 interface Props {
   element: CanvasElement;
@@ -36,6 +38,11 @@ export const DragLayer: React.FC<Props> = ({
   onUpdate,
   onSelect,
 }) => {
+  const theme = useTheme2();
+  const ctx = useCanvasEdit();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
   const dragState = useRef<{
     handle: Handle;
     startX: number;
@@ -45,6 +52,17 @@ export const DragLayer: React.FC<Props> = ({
     origW: number;
     origH: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) { return; }
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
 
   const canvasOffset = useCallback(() => {
     if (!canvasRef.current) {return { x: 0, y: 0 };}
@@ -105,6 +123,21 @@ export const DragLayer: React.FC<Props> = ({
     dragState.current = null;
   }, []);
 
+  const menuItemStyle: React.CSSProperties = {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '5px 10px',
+    cursor: 'pointer',
+    fontSize: theme.typography.bodySmall.fontSize,
+    color: theme.colors.text.primary,
+    background: 'none',
+    border: 'none',
+    width: '100%',
+    textAlign: 'left',
+    whiteSpace: 'nowrap',
+  };
+
   return (
     <div
       style={{
@@ -118,6 +151,7 @@ export const DragLayer: React.FC<Props> = ({
         pointerEvents: 'none',
         zIndex: element.zIndex + 1000,
       }}
+      onClick={(e) => e.stopPropagation()}
     >
       {/* move overlay */}
       <div
@@ -149,6 +183,115 @@ export const DragLayer: React.FC<Props> = ({
           onPointerUp={onPointerUp}
         />
       ))}
+
+      {/* Gear icon + context menu — anchored to the right edge of the selection border */}
+      <div
+        ref={menuRef}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: '100%',
+          marginLeft: 4,
+          pointerEvents: 'all',
+          zIndex: 2,
+        }}
+      >
+        <IconButton
+          name="cog"
+          size="sm"
+          tooltip="Element options"
+          onClick={(e) => {
+            e.stopPropagation();
+            setMenuOpen((o) => !o);
+          }}
+          style={{ background: theme.colors.background.primary, border: `1px solid ${theme.colors.border.medium}` }}
+        />
+
+        {menuOpen && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              marginTop: 2,
+              background: theme.colors.background.primary,
+              border: `1px solid ${theme.colors.border.medium}`,
+              borderRadius: theme.shape.radius.default,
+              boxShadow: theme.shadows.z3,
+              zIndex: 9999,
+              minWidth: 140,
+              opacity: 1,
+            }}
+          >
+            {element.type === 'metric-value' && (
+              <button
+                style={menuItemStyle}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = theme.colors.action.hover; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  ctx?.requestEdit(element.id);
+                }}
+              >
+                Edit
+              </button>
+            )}
+            <button
+              style={menuItemStyle}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = theme.colors.action.hover; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                ctx?.duplicateElement(element.id);
+              }}
+            >
+              Duplicate
+            </button>
+            <button
+              style={menuItemStyle}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = theme.colors.action.hover; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                ctx?.moveToTop(element.id);
+              }}
+            >
+              Move to top
+            </button>
+            <button
+              style={menuItemStyle}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = theme.colors.action.hover; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                ctx?.moveToBottom(element.id);
+              }}
+            >
+              Move to bottom
+            </button>
+            <button
+              style={{
+                ...menuItemStyle,
+                color: theme.colors.error.text,
+                borderTop: `1px solid ${theme.colors.border.weak}`,
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = theme.colors.action.hover; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'none'; }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                ctx?.deleteElement(element.id);
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
