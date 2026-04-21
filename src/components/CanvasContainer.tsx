@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { EventBus, GrafanaTheme2, PanelData } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
-import { AnchorPoint, BackgroundImageSize, CanvasConnection, CanvasElement, CanvasOptions, PixelRect } from '../types';
+import { AnchorPoint, BackgroundImageSize, CanvasConnection, CanvasElement, CanvasGroup, CanvasOptions, PixelRect } from '../types';
 import { resolvePixelRect } from '../utils/placement';
 import { resolveBackgroundImage } from '../utils/colorUtils';
 import { ElementRegistry } from './elements';
@@ -9,7 +9,7 @@ import { useDataBinding } from './hooks/useDataBinding';
 import { ConnectionLayer, ConnectionLayerHandle, anchorPixel, ALL_ANCHORS } from './ConnectionLayer';
 import { ConnectionAnchors } from './ConnectionAnchors';
 import { DragLayer } from './editor/DragLayer';
-import { CanvasElementSelectedEvent, CanvasElementDeleteEvent } from '../events';
+import { CanvasElementSelectedEvent, CanvasElementDeleteEvent, GroupElementsEvent, UngroupElementsEvent } from '../events';
 import { v4 as uuidv4 } from '../utils/uuid';
 
 // ── Nearest anchor helper ─────────────────────────────────────────────────────
@@ -30,6 +30,8 @@ function nearestAnchor(rect: PixelRect, x: number, y: number): AnchorPoint {
 interface EditContextValue {
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;
+  selectedIds: Set<string>;
+  setSelectedIds: (ids: Set<string>) => void;
   updateElement: (id: string, partial: Partial<CanvasElement>) => void;
   updateConnection: (id: string, partial: Partial<CanvasConnection>) => void;
   deleteElement: (id: string) => void;
@@ -37,6 +39,10 @@ interface EditContextValue {
   moveToTop: (id: string) => void;
   moveToBottom: (id: string) => void;
   requestEdit: (id: string) => void;
+  groupElements: (ids: string[]) => void;
+  ungroupElements: (groupId: string) => void;
+  selectGroup: (groupId: string) => void;
+  toggleSelection: (id: string, groupId: string | null) => void;
 }
 
 const CanvasEditContext = createContext<EditContextValue | null>(null);
@@ -81,12 +87,22 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
   const [showAnchors, setShowAnchors] = useState(false);
   const Component = ElementRegistry[element.type];
 
+  const isInSelection = ctx ? ctx.selectedIds.has(element.id) && element.id !== ctx.selectedId : false;
+
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       if (editMode) {
         e.stopPropagation();
-        ctx?.setSelectedId(element.id);
-        eventBus.publish(new CanvasElementSelectedEvent({ elementId: element.id }));
+        if (e.ctrlKey || e.metaKey) {
+          ctx?.toggleSelection(element.id, element.groupId ?? null);
+        } else if (element.groupId) {
+          ctx?.selectGroup(element.groupId);
+          eventBus.publish(new CanvasElementSelectedEvent({ elementId: element.id }));
+        } else {
+          ctx?.setSelectedId(element.id);
+          ctx?.setSelectedIds(new Set([element.id]));
+          eventBus.publish(new CanvasElementSelectedEvent({ elementId: element.id }));
+        }
         return;
       }
 
@@ -185,6 +201,21 @@ const ElementWrapper: React.FC<ElementWrapperProps> = ({
           onSelect={() => ctx.setSelectedId(element.id)}
         />
       )}
+
+      {editMode && isInSelection && (
+        <div
+          style={{
+            position: 'absolute',
+            left: rect.x - 1,
+            top: rect.y - 1,
+            width: rect.width + 2,
+            height: rect.height + 2,
+            border: '1px dashed #4e9fff',
+            pointerEvents: 'none',
+            zIndex: element.zIndex + 999,
+          }}
+        />
+      )}
     </>
   );
 };
@@ -212,6 +243,7 @@ export const CanvasContainer: React.FC<Props> = ({
   const canvasRef = useRef<HTMLDivElement>(null);
   const connectionLayerRef = useRef<ConnectionLayerHandle>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [hoveredElementId, setHoveredElementId] = useState<string | null>(null);
 
@@ -228,6 +260,7 @@ export const CanvasContainer: React.FC<Props> = ({
   useEffect(() => {
     const sub = eventBus.subscribe(CanvasElementSelectedEvent, (event) => {
       setSelectedId(event.payload.elementId);
+      setSelectedIds(event.payload.elementId ? new Set([event.payload.elementId]) : new Set());
     });
     return () => sub.unsubscribe();
   }, [eventBus]);
@@ -239,6 +272,7 @@ export const CanvasContainer: React.FC<Props> = ({
         connectionLayerRef.current?.clearPreview();
         setDrawingConnSrc(null);
         setSelectedId(null);
+        setSelectedIds(new Set());
       }
     };
     window.addEventListener('keydown', handler);
@@ -269,9 +303,50 @@ export const CanvasContainer: React.FC<Props> = ({
 
   const updateElement = useCallback(
     (id: string, partial: Partial<CanvasElement>) => {
+      const elements = options.elements ?? [];
+      const element = elements.find((el) => el.id === id);
+
+      // Group-move: placement-only update where size is unchanged and element belongs to a group
+      const isMoveOnly =
+        partial.placement != null &&
+        element != null &&
+        partial.placement.width === element.placement.width &&
+        partial.placement.height === element.placement.height;
+
+      if (isMoveOnly && element?.groupId) {
+        const oldP = element.placement;
+        const newP = partial.placement!;
+        const dTop    = newP.top    - oldP.top;
+        const dLeft   = newP.left   - oldP.left;
+        const dRight  = newP.right  - oldP.right;
+        const dBottom = newP.bottom - oldP.bottom;
+        const gid = element.groupId;
+
+        onOptionsChange({
+          ...options,
+          elements: elements.map((el) => {
+            if (el.id === id) { return { ...el, ...partial }; }
+            if (el.groupId === gid) {
+              return {
+                ...el,
+                placement: {
+                  ...el.placement,
+                  top:    el.placement.top    + dTop,
+                  left:   el.placement.left   + dLeft,
+                  right:  el.placement.right  + dRight,
+                  bottom: el.placement.bottom + dBottom,
+                },
+              };
+            }
+            return el;
+          }),
+        });
+        return;
+      }
+
       onOptionsChange({
         ...options,
-        elements: (options.elements ?? []).map((el) => (el.id === id ? { ...el, ...partial } : el)),
+        elements: elements.map((el) => (el.id === id ? { ...el, ...partial } : el)),
       });
     },
     [options, onOptionsChange]
@@ -289,12 +364,17 @@ export const CanvasContainer: React.FC<Props> = ({
 
   const deleteElement = useCallback(
     (id: string) => {
+      const remaining = (options.elements ?? []).filter((el) => el.id !== id);
+      const usedGroupIds = new Set(remaining.filter((el) => el.groupId).map((el) => el.groupId!));
+      const newGroups = (options.groups ?? []).filter((g) => usedGroupIds.has(g.id));
       onOptionsChange({
         ...options,
-        elements: (options.elements ?? []).filter((el) => el.id !== id),
+        elements: remaining,
         connections: (options.connections ?? []).filter((c) => c.sourceId !== id && c.targetId !== id),
+        groups: newGroups,
       });
       setSelectedId(null);
+      setSelectedIds(new Set());
     },
     [options, onOptionsChange]
   );
@@ -325,6 +405,7 @@ export const CanvasContainer: React.FC<Props> = ({
         id: uuidv4(),
         name: `${source.name}-copy`,
         zIndex,
+        groupId: undefined,
         placement: { ...source.placement, top: source.placement.top + 5, left: source.placement.left + 5 },
       };
       onOptionsChange({ ...options, elements: [...elements, copy] });
@@ -363,6 +444,107 @@ export const CanvasContainer: React.FC<Props> = ({
     [eventBus]
   );
 
+  const groupElements = useCallback(
+    (ids: string[]) => {
+      const elements = options.elements ?? [];
+      const targets = elements.filter((el) => ids.includes(el.id));
+      if (targets.length < 2) { return; }
+      const sorted = [...targets].sort((a, b) => a.zIndex - b.zIndex);
+      const maxZ = Math.max(...sorted.map((el) => el.zIndex));
+      const count = sorted.length;
+      const newZMap = new Map<string, number>();
+      sorted.forEach((el, i) => { newZMap.set(el.id, maxZ - count + 1 + i); });
+      const groupId = uuidv4();
+      const groupName = `Group ${(options.groups ?? []).length + 1}`;
+      const newGroup: CanvasGroup = { id: groupId, name: groupName };
+      onOptionsChange({
+        ...options,
+        elements: elements.map((el) =>
+          newZMap.has(el.id) ? { ...el, groupId, zIndex: newZMap.get(el.id)! } : el
+        ),
+        groups: [...(options.groups ?? []), newGroup],
+      });
+      setSelectedIds(new Set(ids));
+      setSelectedId(ids[0] ?? null);
+    },
+    [options, onOptionsChange]
+  );
+
+  const ungroupElements = useCallback(
+    (groupId: string) => {
+      onOptionsChange({
+        ...options,
+        elements: (options.elements ?? []).map((el) =>
+          el.groupId === groupId ? { ...el, groupId: undefined } : el
+        ),
+        groups: (options.groups ?? []).filter((g) => g.id !== groupId),
+      });
+      setSelectedId(null);
+      setSelectedIds(new Set());
+    },
+    [options, onOptionsChange]
+  );
+
+  const selectGroup = useCallback(
+    (groupId: string) => {
+      const members = (options.elements ?? []).filter((el) => el.groupId === groupId);
+      const ids = new Set(members.map((el) => el.id));
+      setSelectedIds(ids);
+      const first = [...members].sort((a, b) => a.zIndex - b.zIndex)[0];
+      setSelectedId(first?.id ?? null);
+    },
+    [options.elements]
+  );
+
+  const toggleSelection = useCallback(
+    (id: string, groupId: string | null) => {
+      if (groupId) {
+        const groupMemberIds = (options.elements ?? [])
+          .filter((el) => el.groupId === groupId)
+          .map((el) => el.id);
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          const allIn = groupMemberIds.every((mid) => prev.has(mid));
+          if (allIn) {
+            groupMemberIds.forEach((mid) => next.delete(mid));
+          } else {
+            groupMemberIds.forEach((mid) => next.add(mid));
+          }
+          return next;
+        });
+        setSelectedId((prev) => (prev === id ? null : id));
+      } else {
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          if (next.has(id)) { next.delete(id); } else { next.add(id); }
+          return next;
+        });
+        setSelectedId((prev) => (prev === id ? null : id));
+      }
+    },
+    [options.elements]
+  );
+
+  // Ref-based subscriptions for group events (same pattern as deleteElementRef)
+  const groupElementsRef = useRef(groupElements);
+  const ungroupElementsRef = useRef(ungroupElements);
+  useEffect(() => { groupElementsRef.current = groupElements; });
+  useEffect(() => { ungroupElementsRef.current = ungroupElements; });
+
+  useEffect(() => {
+    const sub = eventBus.subscribe(GroupElementsEvent, (event) => {
+      groupElementsRef.current(event.payload.elementIds);
+    });
+    return () => sub.unsubscribe();
+  }, [eventBus]);
+
+  useEffect(() => {
+    const sub = eventBus.subscribe(UngroupElementsEvent, (event) => {
+      ungroupElementsRef.current(event.payload.groupId);
+    });
+    return () => sub.unsubscribe();
+  }, [eventBus]);
+
   // ── connection drawing ──────────────────────────────────────────────────────
 
   const handleAnchorMouseDown = useCallback(
@@ -380,6 +562,8 @@ export const CanvasContainer: React.FC<Props> = ({
   const editCtx: EditContextValue = {
     selectedId,
     setSelectedId,
+    selectedIds,
+    setSelectedIds,
     updateElement,
     updateConnection,
     deleteElement,
@@ -387,6 +571,10 @@ export const CanvasContainer: React.FC<Props> = ({
     moveToTop,
     moveToBottom,
     requestEdit,
+    groupElements,
+    ungroupElements,
+    selectGroup,
+    toggleSelection,
   };
 
   // ── pan/zoom + connection drag handlers ─────────────────────────────────────
@@ -515,6 +703,7 @@ export const CanvasContainer: React.FC<Props> = ({
         onClick={() => {
           if (options.inlineEditing) {
             setSelectedId(null);
+            setSelectedIds(new Set());
             setSelectedConnectionId(null);
             connectionLayerRef.current?.clearPreview();
             setDrawingConnSrc(null);

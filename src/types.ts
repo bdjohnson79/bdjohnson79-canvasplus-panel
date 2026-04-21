@@ -93,6 +93,12 @@ export interface CanvasElement {
   metricLabelPosition?: 'top' | 'bottom';
   metricValueColor?: ColorConfig;
   zIndex: number;
+  groupId?: string;
+}
+
+export interface CanvasGroup {
+  id: string;
+  name: string;
 }
 
 export type AnchorPoint =
@@ -124,6 +130,7 @@ export interface CanvasOptions {
   background: CanvasBackground;
   inlineEditing: boolean;
   panZoom: boolean;
+  groups?: CanvasGroup[];
 }
 
 /** Resolved absolute pixel rect — used internally for rendering, drag, and connections. */

@@ -15,3 +15,19 @@ export interface CanvasElementDeletePayload {
 export class CanvasElementDeleteEvent extends BusEventWithPayload<CanvasElementDeletePayload> {
   static type = 'canvas-element-delete';
 }
+
+export interface GroupElementsPayload {
+  elementIds: string[];
+}
+
+export class GroupElementsEvent extends BusEventWithPayload<GroupElementsPayload> {
+  static type = 'canvas-group-elements';
+}
+
+export interface UngroupElementsPayload {
+  groupId: string;
+}
+
+export class UngroupElementsEvent extends BusEventWithPayload<UngroupElementsPayload> {
+  static type = 'canvas-ungroup-elements';
+}

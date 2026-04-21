@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { GrafanaTheme2, StandardEditorProps } from '@grafana/data';
-import { CanvasElementSelectedEvent, CanvasElementDeleteEvent } from '../../events';
+import { CanvasElementSelectedEvent, CanvasElementDeleteEvent, GroupElementsEvent, UngroupElementsEvent } from '../../events';
 import { Button, Field, Icon, IconButton, IconName, Input, Select, TextArea, Tooltip, getAvailableIcons, useStyles2, useTheme2 } from '@grafana/ui';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import { css } from '@emotion/css';
 import {
   CanvasElement,
+  CanvasGroup,
   CanvasOptions,
   ElementConstraint,
   ElementType,
@@ -447,6 +448,31 @@ const getStyles = (theme: GrafanaTheme2) => ({
     border-radius: ${theme.shape.radius.default};
     margin-top: ${theme.spacing(0.5)};
   `,
+  groupHeader: css`
+    display: flex;
+    align-items: center;
+    padding: ${theme.spacing(0.5)} 0;
+    border-bottom: 1px solid ${theme.colors.border.weak};
+    background: ${theme.colors.background.secondary};
+    cursor: pointer;
+    gap: ${theme.spacing(0.5)};
+  `,
+  groupLabel: css`
+    font-size: ${theme.typography.bodySmall.fontSize};
+    font-weight: ${theme.typography.fontWeightMedium};
+    flex: 1;
+  `,
+  memberRow: css`
+    padding-left: ${theme.spacing(2)};
+    border-left: 2px solid ${theme.colors.border.medium};
+  `,
+  multiSelectBar: css`
+    display: flex;
+    align-items: center;
+    gap: ${theme.spacing(1)};
+    padding: ${theme.spacing(0.5)} 0;
+    margin-bottom: ${theme.spacing(0.5)};
+  `,
 });
 
 // ── Main editor ───────────────────────────────────────────────────────────────
@@ -457,13 +483,18 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
   context,
 }) => {
   const styles = useStyles2(getStyles);
+  const theme = useTheme2();
   const elements = value ?? [];
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [newType, setNewType] = useState<ElementType>('rectangle');
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     const sub = context.eventBus?.subscribe(CanvasElementSelectedEvent, (event) => {
-      setExpandedId(event.payload.elementId);
+      const id = event.payload.elementId;
+      setExpandedId(id);
+      setCheckedIds(id ? new Set([id]) : new Set());
     });
     return () => sub?.unsubscribe();
   }, [context.eventBus]);
@@ -501,10 +532,21 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
       id: uuidv4(),
       name: `${source.name}-copy`,
       zIndex,
+      groupId: undefined,
       placement: { ...source.placement, top: source.placement.top + 5, left: source.placement.left + 5 },
     };
     onChange([...elements, copy]);
     context.eventBus?.publish(new CanvasElementSelectedEvent({ elementId: copy.id }));
+  };
+
+  const groupSelected = () => {
+    if (checkedIds.size < 2) { return; }
+    context.eventBus?.publish(new GroupElementsEvent({ elementIds: [...checkedIds] }));
+    setCheckedIds(new Set());
+  };
+
+  const ungroupGroup = (groupId: string) => {
+    context.eventBus?.publish(new UngroupElementsEvent({ groupId }));
   };
 
   const addElement = () => {
@@ -514,417 +556,526 @@ export const ElementsEditor: React.FC<StandardEditorProps<CanvasElement[], unkno
     context.eventBus?.publish(new CanvasElementSelectedEvent({ elementId: newEl.id }));
   };
 
+  type DraggableUnit =
+    | { kind: 'element'; element: CanvasElement }
+    | { kind: 'group'; groupId: string; groupName: string; members: CanvasElement[] };
+
+  const groups: CanvasGroup[] = context.options?.groups ?? [];
+  const groupMap = new Map(groups.map((g) => [g.id, g]));
+
+  const draggableUnits = useMemo((): DraggableUnit[] => {
+    const units: DraggableUnit[] = [];
+    const seenGroupIds = new Set<string>();
+    for (const el of elements) {
+      if (!el.groupId) {
+        units.push({ kind: 'element', element: el });
+      } else if (!seenGroupIds.has(el.groupId)) {
+        seenGroupIds.add(el.groupId);
+        const group = groupMap.get(el.groupId);
+        if (group) {
+          const members = elements
+            .filter((m) => m.groupId === el.groupId)
+            .sort((a, b) => b.zIndex - a.zIndex);
+          units.push({ kind: 'group', groupId: group.id, groupName: group.name, members });
+        }
+      }
+    }
+    return units;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elements, groups]);
+
   const onDragEnd = (result: DropResult) => {
     if (!result.destination || result.destination.index === result.source.index) { return; }
-    const reordered = [...elements];
-    const [moved] = reordered.splice(result.source.index, 1);
-    reordered.splice(result.destination.index, 0, moved);
-    const normalized = reordered.map((el, i) => ({ ...el, zIndex: reordered.length - i }));
+    const reorderedUnits = [...draggableUnits];
+    const [moved] = reorderedUnits.splice(result.source.index, 1);
+    reorderedUnits.splice(result.destination.index, 0, moved);
+    const newElements: CanvasElement[] = [];
+    for (const unit of reorderedUnits) {
+      if (unit.kind === 'element') {
+        newElements.push(unit.element);
+      } else {
+        newElements.push(...unit.members);
+      }
+    }
+    const normalized = newElements.map((el, i) => ({ ...el, zIndex: newElements.length - i }));
     onChange(normalized);
   };
 
+  const renderElementItem = (el: CanvasElement, dragHandleProps: object | null) => (
+    <>
+      <div
+        className={`${styles.row}${expandedId === el.id ? ` ${styles.rowSelected}` : ''}`}
+        onClick={() => {
+          const next = expandedId === el.id ? null : el.id;
+          setExpandedId(next);
+          context.eventBus?.publish(new CanvasElementSelectedEvent({ elementId: next }));
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={checkedIds.has(el.id)}
+          style={{ marginRight: 4, cursor: 'pointer', flexShrink: 0 }}
+          onChange={() => {
+            setCheckedIds((prev) => {
+              const next = new Set(prev);
+              if (next.has(el.id)) { next.delete(el.id); } else { next.add(el.id); }
+              return next;
+            });
+          }}
+          onClick={(e) => e.stopPropagation()}
+        />
+        {dragHandleProps && (
+          <span
+            className={styles.dragIcon}
+            {...(dragHandleProps as React.HTMLAttributes<HTMLSpanElement>)}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Icon name="draggabledots" />
+          </span>
+        )}
+        <span className={styles.rowLabel}>
+          {el.name} <em style={{ opacity: 0.6 }}>({el.type})</em>
+        </span>
+        <div className={styles.actions}>
+          <IconButton name="copy" size="sm" tooltip="Duplicate element"
+            onClick={(e) => { e.stopPropagation(); duplicateElement(el.id); }} />
+          <IconButton name="trash-alt" size="sm" tooltip="Delete element"
+            onClick={(e) => { e.stopPropagation(); removeElement(el.id); }} />
+          <IconButton
+            name={expandedId === el.id ? 'angle-up' : 'angle-down'}
+            size="sm"
+            tooltip={expandedId === el.id ? 'Collapse' : 'Expand'}
+          />
+        </div>
+      </div>
+
+      {expandedId === el.id && (
+        <div className={styles.elementForm}>
+          <Field label="Name">
+            <Input value={el.name} onChange={(e) => updateElement(el.id, { name: e.currentTarget.value })} />
+          </Field>
+
+          {/* ── Background ── */}
+          <div className={styles.section}>Background</div>
+          <ColorConfigEditor
+            label="Color"
+            value={el.background.color}
+            onChange={(c) => updateElement(el.id, { background: { ...el.background, color: c } })}
+            fieldOptions={fieldOptions}
+          />
+
+          {/* ── Border ── */}
+          <div className={styles.section}>Border</div>
+          <div className={styles.twoCol}>
+            <Field label="Width">
+              <Input type="number" value={el.border.width} width={8}
+                onChange={(e) => updateElement(el.id, { border: { ...el.border, width: Number(e.currentTarget.value) } })} />
+            </Field>
+            <Field label="Radius">
+              <Input type="number" value={el.border.radius} width={8}
+                onChange={(e) => updateElement(el.id, { border: { ...el.border, radius: Number(e.currentTarget.value) } })} />
+            </Field>
+          </div>
+          <ColorConfigEditor
+            label="Color"
+            value={el.border.color}
+            onChange={(c) => updateElement(el.id, { border: { ...el.border, color: c } })}
+            fieldOptions={fieldOptions}
+          />
+
+          {/* ── Text ── */}
+          {el.text && (
+            <>
+              <div className={styles.section}>Text</div>
+              <TextConfigEditor
+                label="Content"
+                value={el.text.content}
+                onChange={(c) => updateElement(el.id, { text: { ...el.text!, content: c } })}
+                fieldOptions={fieldOptions}
+              />
+              <div className={styles.twoCol}>
+                <Field label="Size px">
+                  <Input type="number" value={el.text.size} width={8}
+                    onChange={(e) =>
+                      updateElement(el.id, { text: { ...el.text!, size: Number(e.currentTarget.value) } })
+                    }
+                  />
+                </Field>
+                <Field label="Align">
+                  <Select
+                    width={10}
+                    options={[
+                      { label: 'Left', value: 'left' as const },
+                      { label: 'Center', value: 'center' as const },
+                      { label: 'Right', value: 'right' as const },
+                    ]}
+                    value={el.text.align}
+                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, align: v.value! } })}
+                  />
+                </Field>
+              </div>
+              <div className={styles.twoCol}>
+                <Field label="Weight">
+                  <Select
+                    width={14}
+                    options={FONT_WEIGHT_OPTIONS}
+                    value={
+                      typeof el.text.fontWeight === 'string'
+                        ? (el.text.fontWeight === 'bold' ? 700 : 400)
+                        : el.text.fontWeight
+                    }
+                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontWeight: Number(v.value!) } })}
+                  />
+                </Field>
+                <Field label="Style">
+                  <Select
+                    width={10}
+                    options={[
+                      { label: 'Normal', value: 'normal' as const },
+                      { label: 'Italic', value: 'italic' as const },
+                    ]}
+                    value={el.text.fontStyle}
+                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontStyle: v.value! } })}
+                  />
+                </Field>
+              </div>
+              <ColorConfigEditor
+                label="Color"
+                value={el.text.color}
+                onChange={(c) => updateElement(el.id, { text: { ...el.text!, color: c } })}
+                fieldOptions={fieldOptions}
+              />
+            </>
+          )}
+
+          {/* ── Icon ── */}
+          {el.type === 'icon' && (
+            <>
+              <div className={styles.section}>Icon</div>
+              <Field label="Icon">
+                <IconPickerField
+                  value={el.iconName ?? 'question-circle'}
+                  onChange={(name) => updateElement(el.id, { iconName: name })}
+                />
+              </Field>
+              <ColorConfigEditor
+                label="Color"
+                value={el.iconColor ?? { mode: 'fixed', value: '#ffffff' }}
+                onChange={(c) => updateElement(el.id, { iconColor: c })}
+                fieldOptions={fieldOptions}
+              />
+            </>
+          )}
+
+          {/* ── Server ── */}
+          {el.type === 'server' && (
+            <>
+              <div className={styles.section}>Server</div>
+              <Field label="Variant">
+                <Select
+                  options={[
+                    { label: 'Single', value: 'single' as const },
+                    { label: 'Stack', value: 'stack' as const },
+                    { label: 'Database', value: 'database' as const },
+                    { label: 'Terminal', value: 'terminal' as const },
+                  ]}
+                  value={el.serverVariant ?? 'single'}
+                  onChange={(v) => updateElement(el.id, { serverVariant: v.value! })}
+                />
+              </Field>
+              <ColorConfigEditor
+                label="Status color"
+                value={el.statusColor ?? { mode: 'fixed', value: '#73bf69' }}
+                onChange={(c) => updateElement(el.id, { statusColor: c })}
+                fieldOptions={fieldOptions}
+              />
+            </>
+          )}
+
+          {/* ── Image ── */}
+          {el.type === 'image' && (
+            <>
+              <div className={styles.section}>Image</div>
+              <Field label="Source">
+                <Select
+                  options={[
+                    { label: 'Inline (paste data)', value: 'inline' as const },
+                    { label: 'From query field', value: 'field' as const },
+                  ]}
+                  value={el.imageSource ?? 'inline'}
+                  onChange={(v) => updateElement(el.id, { imageSource: v.value! })}
+                />
+              </Field>
+
+              {(el.imageSource ?? 'inline') === 'inline' && (
+                <>
+                  <Field label="Format">
+                    <Select
+                      options={[
+                        { label: 'SVG (text/xml)', value: 'svg+xml' as const },
+                        { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
+                        { label: 'PNG (base64)', value: 'png' as const },
+                        { label: 'JPEG (base64)', value: 'jpeg' as const },
+                        { label: 'GIF (base64)', value: 'gif' as const },
+                        { label: 'WebP (base64)', value: 'webp' as const },
+                      ]}
+                      value={el.imageFormat ?? 'png'}
+                      onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
+                    />
+                  </Field>
+                  <Field
+                    label="Image data"
+                    description={
+                      (el.imageFormat ?? 'png') === 'svg+xml'
+                        ? 'Paste SVG markup'
+                        : 'Paste base64 encoded image data'
+                    }
+                  >
+                    <TextArea
+                      value={el.imageData ?? ''}
+                      rows={4}
+                      onChange={(e) => updateElement(el.id, { imageData: e.currentTarget.value })}
+                    />
+                  </Field>
+                </>
+              )}
+
+              {el.imageSource === 'field' && (
+                <>
+                  <Field label="Format" description="MIME type when field value is raw base64 (not a data URL)">
+                    <Select
+                      options={[
+                        { label: 'PNG', value: 'png' as const },
+                        { label: 'JPEG', value: 'jpeg' as const },
+                        { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
+                        { label: 'GIF', value: 'gif' as const },
+                        { label: 'WebP', value: 'webp' as const },
+                      ]}
+                      value={el.imageFormat ?? 'png'}
+                      onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
+                    />
+                  </Field>
+                  <Field label="Field name" description="Query field containing base64 data or a data URL">
+                    <Select
+                      options={fieldOptions}
+                      value={el.imageField ?? null}
+                      placeholder="Select field…"
+                      isClearable
+                      onChange={(v) => updateElement(el.id, { imageField: v?.value ?? '' })}
+                    />
+                  </Field>
+                </>
+              )}
+
+              <Field label="Fit">
+                <Select
+                  options={[
+                    { label: 'Contain', value: 'contain' as const },
+                    { label: 'Cover', value: 'cover' as const },
+                    { label: 'Fill', value: 'fill' as const },
+                    { label: 'None', value: 'none' as const },
+                  ]}
+                  value={el.imageFit ?? 'contain'}
+                  onChange={(v) => updateElement(el.id, { imageFit: v.value! })}
+                />
+              </Field>
+            </>
+          )}
+
+          {/* ── Metric Value ── */}
+          {el.type === 'metric-value' && (
+            <>
+              <div className={styles.section}>Metric Value</div>
+              <Field label="Field name" description="Query field whose last value is displayed">
+                <Select
+                  options={fieldOptions}
+                  value={el.metricField ?? null}
+                  placeholder="Select field…"
+                  isClearable
+                  onChange={(v) => updateElement(el.id, { metricField: v?.value ?? '' })}
+                />
+              </Field>
+              <div className={styles.twoCol}>
+                <Field label="Value size px">
+                  <Input
+                    type="number"
+                    value={el.metricValueSize ?? 32}
+                    width={8}
+                    onChange={(e) => updateElement(el.id, { metricValueSize: Number(e.currentTarget.value) })}
+                  />
+                </Field>
+                <Field label="Label position">
+                  <Select
+                    width={10}
+                    options={[
+                      { label: 'Top', value: 'top' as const },
+                      { label: 'Bottom', value: 'bottom' as const },
+                    ]}
+                    value={el.metricLabelPosition ?? 'bottom'}
+                    onChange={(v) => updateElement(el.id, { metricLabelPosition: v.value! })}
+                  />
+                </Field>
+              </div>
+              <div className={styles.twoCol}>
+                <Field label="Value weight">
+                  <Select
+                    width={14}
+                    options={FONT_WEIGHT_OPTIONS}
+                    value={el.metricValueWeight ?? 700}
+                    onChange={(v) => updateElement(el.id, { metricValueWeight: Number(v.value!) })}
+                  />
+                </Field>
+                <Field label="Value style">
+                  <Select
+                    width={10}
+                    options={[
+                      { label: 'Normal', value: 'normal' as const },
+                      { label: 'Italic', value: 'italic' as const },
+                    ]}
+                    value={el.metricValueStyle ?? 'normal'}
+                    onChange={(v) => updateElement(el.id, { metricValueStyle: v.value! })}
+                  />
+                </Field>
+              </div>
+              <ColorConfigEditor
+                label="Value color"
+                value={el.metricValueColor ?? { mode: 'thresholds' }}
+                onChange={(c) => updateElement(el.id, { metricValueColor: c })}
+                fieldOptions={fieldOptions}
+              />
+            </>
+          )}
+
+          {/* ── Layout ── */}
+          <div className={styles.section}>Layout</div>
+          <QuickPlacement el={el} onUpdate={(p) => updateElement(el.id, p)} />
+
+          <div className={styles.twoCol} style={{ marginTop: 8 }}>
+            <Field label="Horizontal">
+              <Select
+                width={14}
+                options={H_CONSTRAINT_OPTIONS}
+                value={el.constraint.horizontal}
+                onChange={(v) =>
+                  updateElement(el.id, { constraint: { ...el.constraint, horizontal: v.value! } })
+                }
+              />
+            </Field>
+            <Field label="Vertical">
+              <Select
+                width={14}
+                options={V_CONSTRAINT_OPTIONS}
+                value={el.constraint.vertical}
+                onChange={(v) =>
+                  updateElement(el.id, { constraint: { ...el.constraint, vertical: v.value! } })
+                }
+              />
+            </Field>
+          </div>
+
+          <PositionFields el={el} onUpdate={(p) => updateElement(el.id, p)} />
+
+          <div className={styles.twoCol}>
+            <Field label="Width">
+              <Input type="number" value={el.placement.width} width={8}
+                onChange={(e) =>
+                  updateElement(el.id, { placement: { ...el.placement, width: Number(e.currentTarget.value) } })
+                }
+              />
+            </Field>
+            <Field label="Height">
+              <Input type="number" value={el.placement.height} width={8}
+                onChange={(e) =>
+                  updateElement(el.id, { placement: { ...el.placement, height: Number(e.currentTarget.value) } })
+                }
+              />
+            </Field>
+          </div>
+          <Field label="Rotation °">
+            <Input type="number" value={el.placement.rotation}
+              onChange={(e) =>
+                updateElement(el.id, { placement: { ...el.placement, rotation: Number(e.currentTarget.value) } })
+              }
+            />
+          </Field>
+          <div className={styles.twoCol}>
+            <Field label="Z-Index">
+              <Input type="number" value={el.zIndex} width={8}
+                onChange={(e) => updateElement(el.id, { zIndex: Number(e.currentTarget.value) })} />
+            </Field>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div>
+      {checkedIds.size >= 2 && (
+        <div className={styles.multiSelectBar}>
+          <span style={{ fontSize: theme.typography.bodySmall.fontSize, color: theme.colors.text.secondary }}>
+            {checkedIds.size} selected
+          </span>
+          <Button size="sm" variant="primary" onClick={groupSelected}>Group</Button>
+          <Button size="sm" variant="secondary" onClick={() => setCheckedIds(new Set())}>Clear</Button>
+        </div>
+      )}
       <DragDropContext onDragEnd={onDragEnd}>
         <Droppable droppableId="elements-list">
           {(droppableProvided) => (
             <div ref={droppableProvided.innerRef} {...droppableProvided.droppableProps}>
-              {elements.map((el, index) => (
-                <Draggable key={el.id} draggableId={el.id} index={index}>
-                  {(draggableProvided) => (
-                    <div ref={draggableProvided.innerRef} {...draggableProvided.draggableProps}>
-                      <div
-                        className={`${styles.row}${expandedId === el.id ? ` ${styles.rowSelected}` : ''}`}
-                        onClick={() => {
-                          const next = expandedId === el.id ? null : el.id;
-                          setExpandedId(next);
-                          context.eventBus?.publish(new CanvasElementSelectedEvent({ elementId: next }));
-                        }}
-                      >
-                        <span
-                          className={styles.dragIcon}
-                          {...draggableProvided.dragHandleProps}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Icon name="draggabledots" />
-                        </span>
-                        <span className={styles.rowLabel}>
-                          {el.name} <em style={{ opacity: 0.6 }}>({el.type})</em>
-                        </span>
-                        <div className={styles.actions}>
-                          <IconButton name="copy" size="sm" tooltip="Duplicate element"
-                            onClick={(e) => { e.stopPropagation(); duplicateElement(el.id); }} />
-                          <IconButton name="trash-alt" size="sm" tooltip="Delete element"
-                            onClick={(e) => { e.stopPropagation(); removeElement(el.id); }} />
-                          <IconButton
-                            name={expandedId === el.id ? 'angle-up' : 'angle-down'}
-                            size="sm"
-                            tooltip={expandedId === el.id ? 'Collapse' : 'Expand'}
-                          />
-                        </div>
-                      </div>
-
-                      {expandedId === el.id && (
-                        <div className={styles.elementForm}>
-                          <Field label="Name">
-                            <Input value={el.name} onChange={(e) => updateElement(el.id, { name: e.currentTarget.value })} />
-                          </Field>
-
-                          {/* ── Background ── */}
-                          <div className={styles.section}>Background</div>
-                          <ColorConfigEditor
-                            label="Color"
-                            value={el.background.color}
-                            onChange={(c) => updateElement(el.id, { background: { ...el.background, color: c } })}
-                            fieldOptions={fieldOptions}
-                          />
-
-                          {/* ── Border ── */}
-                          <div className={styles.section}>Border</div>
-                          <div className={styles.twoCol}>
-                            <Field label="Width">
-                              <Input type="number" value={el.border.width} width={8}
-                                onChange={(e) => updateElement(el.id, { border: { ...el.border, width: Number(e.currentTarget.value) } })} />
-                            </Field>
-                            <Field label="Radius">
-                              <Input type="number" value={el.border.radius} width={8}
-                                onChange={(e) => updateElement(el.id, { border: { ...el.border, radius: Number(e.currentTarget.value) } })} />
-                            </Field>
-                          </div>
-                          <ColorConfigEditor
-                            label="Color"
-                            value={el.border.color}
-                            onChange={(c) => updateElement(el.id, { border: { ...el.border, color: c } })}
-                            fieldOptions={fieldOptions}
-                          />
-
-                          {/* ── Text ── */}
-                          {el.text && (
-                            <>
-                              <div className={styles.section}>Text</div>
-                              <TextConfigEditor
-                                label="Content"
-                                value={el.text.content}
-                                onChange={(c) => updateElement(el.id, { text: { ...el.text!, content: c } })}
-                                fieldOptions={fieldOptions}
-                              />
-                              <div className={styles.twoCol}>
-                                <Field label="Size px">
-                                  <Input type="number" value={el.text.size} width={8}
-                                    onChange={(e) =>
-                                      updateElement(el.id, { text: { ...el.text!, size: Number(e.currentTarget.value) } })
-                                    }
-                                  />
-                                </Field>
-                                <Field label="Align">
-                                  <Select
-                                    width={10}
-                                    options={[
-                                      { label: 'Left', value: 'left' as const },
-                                      { label: 'Center', value: 'center' as const },
-                                      { label: 'Right', value: 'right' as const },
-                                    ]}
-                                    value={el.text.align}
-                                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, align: v.value! } })}
-                                  />
-                                </Field>
-                              </div>
-                              <div className={styles.twoCol}>
-                                <Field label="Weight">
-                                  <Select
-                                    width={14}
-                                    options={FONT_WEIGHT_OPTIONS}
-                                    value={
-                                      typeof el.text.fontWeight === 'string'
-                                        ? (el.text.fontWeight === 'bold' ? 700 : 400)
-                                        : el.text.fontWeight
-                                    }
-                                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontWeight: Number(v.value!) } })}
-                                  />
-                                </Field>
-                                <Field label="Style">
-                                  <Select
-                                    width={10}
-                                    options={[
-                                      { label: 'Normal', value: 'normal' as const },
-                                      { label: 'Italic', value: 'italic' as const },
-                                    ]}
-                                    value={el.text.fontStyle}
-                                    onChange={(v) => updateElement(el.id, { text: { ...el.text!, fontStyle: v.value! } })}
-                                  />
-                                </Field>
-                              </div>
-                              <ColorConfigEditor
-                                label="Color"
-                                value={el.text.color}
-                                onChange={(c) => updateElement(el.id, { text: { ...el.text!, color: c } })}
-                                fieldOptions={fieldOptions}
-                              />
-                            </>
-                          )}
-
-                          {/* ── Icon ── */}
-                          {el.type === 'icon' && (
-                            <>
-                              <div className={styles.section}>Icon</div>
-                              <Field label="Icon">
-                                <IconPickerField
-                                  value={el.iconName ?? 'question-circle'}
-                                  onChange={(name) => updateElement(el.id, { iconName: name })}
-                                />
-                              </Field>
-                              <ColorConfigEditor
-                                label="Color"
-                                value={el.iconColor ?? { mode: 'fixed', value: '#ffffff' }}
-                                onChange={(c) => updateElement(el.id, { iconColor: c })}
-                                fieldOptions={fieldOptions}
-                              />
-                            </>
-                          )}
-
-                          {/* ── Server ── */}
-                          {el.type === 'server' && (
-                            <>
-                              <div className={styles.section}>Server</div>
-                              <Field label="Variant">
-                                <Select
-                                  options={[
-                                    { label: 'Single', value: 'single' as const },
-                                    { label: 'Stack', value: 'stack' as const },
-                                    { label: 'Database', value: 'database' as const },
-                                    { label: 'Terminal', value: 'terminal' as const },
-                                  ]}
-                                  value={el.serverVariant ?? 'single'}
-                                  onChange={(v) => updateElement(el.id, { serverVariant: v.value! })}
-                                />
-                              </Field>
-                              <ColorConfigEditor
-                                label="Status color"
-                                value={el.statusColor ?? { mode: 'fixed', value: '#73bf69' }}
-                                onChange={(c) => updateElement(el.id, { statusColor: c })}
-                                fieldOptions={fieldOptions}
-                              />
-                            </>
-                          )}
-
-                          {/* ── Image ── */}
-                          {el.type === 'image' && (
-                            <>
-                              <div className={styles.section}>Image</div>
-                              <Field label="Source">
-                                <Select
-                                  options={[
-                                    { label: 'Inline (paste data)', value: 'inline' as const },
-                                    { label: 'From query field', value: 'field' as const },
-                                  ]}
-                                  value={el.imageSource ?? 'inline'}
-                                  onChange={(v) => updateElement(el.id, { imageSource: v.value! })}
-                                />
-                              </Field>
-
-                              {(el.imageSource ?? 'inline') === 'inline' && (
-                                <>
-                                  <Field label="Format">
-                                    <Select
-                                      options={[
-                                        { label: 'SVG (text/xml)', value: 'svg+xml' as const },
-                                        { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
-                                        { label: 'PNG (base64)', value: 'png' as const },
-                                        { label: 'JPEG (base64)', value: 'jpeg' as const },
-                                        { label: 'GIF (base64)', value: 'gif' as const },
-                                        { label: 'WebP (base64)', value: 'webp' as const },
-                                      ]}
-                                      value={el.imageFormat ?? 'png'}
-                                      onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
-                                    />
-                                  </Field>
-                                  <Field
-                                    label="Image data"
-                                    description={
-                                      (el.imageFormat ?? 'png') === 'svg+xml'
-                                        ? 'Paste SVG markup'
-                                        : 'Paste base64 encoded image data'
-                                    }
-                                  >
-                                    <TextArea
-                                      value={el.imageData ?? ''}
-                                      rows={4}
-                                      onChange={(e) => updateElement(el.id, { imageData: e.currentTarget.value })}
-                                    />
-                                  </Field>
-                                </>
-                              )}
-
-                              {el.imageSource === 'field' && (
-                                <>
-                                  <Field label="Format" description="MIME type when field value is raw base64 (not a data URL)">
-                                    <Select
-                                      options={[
-                                        { label: 'PNG', value: 'png' as const },
-                                        { label: 'JPEG', value: 'jpeg' as const },
-                                        { label: 'SVG (base64)', value: 'svg+xml;base64' as const },
-                                        { label: 'GIF', value: 'gif' as const },
-                                        { label: 'WebP', value: 'webp' as const },
-                                      ]}
-                                      value={el.imageFormat ?? 'png'}
-                                      onChange={(v) => updateElement(el.id, { imageFormat: v.value! })}
-                                    />
-                                  </Field>
-                                  <Field label="Field name" description="Query field containing base64 data or a data URL">
-                                    <Select
-                                      options={fieldOptions}
-                                      value={el.imageField ?? null}
-                                      placeholder="Select field…"
-                                      isClearable
-                                      onChange={(v) => updateElement(el.id, { imageField: v?.value ?? '' })}
-                                    />
-                                  </Field>
-                                </>
-                              )}
-
-                              <Field label="Fit">
-                                <Select
-                                  options={[
-                                    { label: 'Contain', value: 'contain' as const },
-                                    { label: 'Cover', value: 'cover' as const },
-                                    { label: 'Fill', value: 'fill' as const },
-                                    { label: 'None', value: 'none' as const },
-                                  ]}
-                                  value={el.imageFit ?? 'contain'}
-                                  onChange={(v) => updateElement(el.id, { imageFit: v.value! })}
-                                />
-                              </Field>
-                            </>
-                          )}
-
-                          {/* ── Metric Value ── */}
-                          {el.type === 'metric-value' && (
-                            <>
-                              <div className={styles.section}>Metric Value</div>
-                              <Field label="Field name" description="Query field whose last value is displayed">
-                                <Select
-                                  options={fieldOptions}
-                                  value={el.metricField ?? null}
-                                  placeholder="Select field…"
-                                  isClearable
-                                  onChange={(v) => updateElement(el.id, { metricField: v?.value ?? '' })}
-                                />
-                              </Field>
-                              <div className={styles.twoCol}>
-                                <Field label="Value size px">
-                                  <Input
-                                    type="number"
-                                    value={el.metricValueSize ?? 32}
-                                    width={8}
-                                    onChange={(e) => updateElement(el.id, { metricValueSize: Number(e.currentTarget.value) })}
-                                  />
-                                </Field>
-                                <Field label="Label position">
-                                  <Select
-                                    width={10}
-                                    options={[
-                                      { label: 'Top', value: 'top' as const },
-                                      { label: 'Bottom', value: 'bottom' as const },
-                                    ]}
-                                    value={el.metricLabelPosition ?? 'bottom'}
-                                    onChange={(v) => updateElement(el.id, { metricLabelPosition: v.value! })}
-                                  />
-                                </Field>
-                              </div>
-                              <div className={styles.twoCol}>
-                                <Field label="Value weight">
-                                  <Select
-                                    width={14}
-                                    options={FONT_WEIGHT_OPTIONS}
-                                    value={el.metricValueWeight ?? 700}
-                                    onChange={(v) => updateElement(el.id, { metricValueWeight: Number(v.value!) })}
-                                  />
-                                </Field>
-                                <Field label="Value style">
-                                  <Select
-                                    width={10}
-                                    options={[
-                                      { label: 'Normal', value: 'normal' as const },
-                                      { label: 'Italic', value: 'italic' as const },
-                                    ]}
-                                    value={el.metricValueStyle ?? 'normal'}
-                                    onChange={(v) => updateElement(el.id, { metricValueStyle: v.value! })}
-                                  />
-                                </Field>
-                              </div>
-                              <ColorConfigEditor
-                                label="Value color"
-                                value={el.metricValueColor ?? { mode: 'thresholds' }}
-                                onChange={(c) => updateElement(el.id, { metricValueColor: c })}
-                                fieldOptions={fieldOptions}
-                              />
-                            </>
-                          )}
-
-                          {/* ── Layout ── */}
-                          <div className={styles.section}>Layout</div>
-                          <QuickPlacement el={el} onUpdate={(p) => updateElement(el.id, p)} />
-
-                          <div className={styles.twoCol} style={{ marginTop: 8 }}>
-                            <Field label="Horizontal">
-                              <Select
-                                width={14}
-                                options={H_CONSTRAINT_OPTIONS}
-                                value={el.constraint.horizontal}
-                                onChange={(v) =>
-                                  updateElement(el.id, { constraint: { ...el.constraint, horizontal: v.value! } })
-                                }
-                              />
-                            </Field>
-                            <Field label="Vertical">
-                              <Select
-                                width={14}
-                                options={V_CONSTRAINT_OPTIONS}
-                                value={el.constraint.vertical}
-                                onChange={(v) =>
-                                  updateElement(el.id, { constraint: { ...el.constraint, vertical: v.value! } })
-                                }
-                              />
-                            </Field>
-                          </div>
-
-                          <PositionFields el={el} onUpdate={(p) => updateElement(el.id, p)} />
-
-                          <div className={styles.twoCol}>
-                            <Field label="Width">
-                              <Input type="number" value={el.placement.width} width={8}
-                                onChange={(e) =>
-                                  updateElement(el.id, { placement: { ...el.placement, width: Number(e.currentTarget.value) } })
-                                }
-                              />
-                            </Field>
-                            <Field label="Height">
-                              <Input type="number" value={el.placement.height} width={8}
-                                onChange={(e) =>
-                                  updateElement(el.id, { placement: { ...el.placement, height: Number(e.currentTarget.value) } })
-                                }
-                              />
-                            </Field>
-                          </div>
-                          <Field label="Rotation °">
-                            <Input type="number" value={el.placement.rotation}
-                              onChange={(e) =>
-                                updateElement(el.id, { placement: { ...el.placement, rotation: Number(e.currentTarget.value) } })
-                              }
-                            />
-                          </Field>
-                          <div className={styles.twoCol}>
-                            <Field label="Z-Index">
-                              <Input type="number" value={el.zIndex} width={8}
-                                onChange={(e) => updateElement(el.id, { zIndex: Number(e.currentTarget.value) })} />
-                            </Field>
-                          </div>
+              {draggableUnits.map((unit, unitIndex) => {
+                if (unit.kind === 'element') {
+                  return (
+                    <Draggable key={unit.element.id} draggableId={unit.element.id} index={unitIndex}>
+                      {(dp) => (
+                        <div ref={dp.innerRef} {...dp.draggableProps}>
+                          {renderElementItem(unit.element, dp.dragHandleProps)}
                         </div>
                       )}
-                    </div>
-                  )}
-                </Draggable>
-              ))}
+                    </Draggable>
+                  );
+                }
+                return (
+                  <Draggable key={`group-${unit.groupId}`} draggableId={`group-${unit.groupId}`} index={unitIndex}>
+                    {(dp) => (
+                      <div ref={dp.innerRef} {...dp.draggableProps}>
+                        <div
+                          className={styles.groupHeader}
+                          onClick={() => setCollapsedGroups((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(unit.groupId)) { next.delete(unit.groupId); } else { next.add(unit.groupId); }
+                            return next;
+                          })}
+                        >
+                          <span
+                            className={styles.dragIcon}
+                            {...(dp.dragHandleProps as React.HTMLAttributes<HTMLSpanElement>)}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Icon name="draggabledots" />
+                          </span>
+                          <Icon name={collapsedGroups.has(unit.groupId) ? 'angle-right' : 'angle-down'} />
+                          <span className={styles.groupLabel}>
+                            {unit.groupName} <em style={{ opacity: 0.6 }}>({unit.members.length})</em>
+                          </span>
+                          <IconButton
+                            name="times"
+                            size="sm"
+                            tooltip="Ungroup"
+                            onClick={(e) => { e.stopPropagation(); ungroupGroup(unit.groupId); }}
+                          />
+                        </div>
+                        {!collapsedGroups.has(unit.groupId) && unit.members.map((m) => (
+                          <div key={m.id} className={styles.memberRow}>
+                            {renderElementItem(m, null)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Draggable>
+                );
+              })}
               {droppableProvided.placeholder}
             </div>
           )}
