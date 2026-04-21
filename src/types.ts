@@ -53,7 +53,19 @@ export interface BorderStyle {
 
 export interface BackgroundStyle {
   color: ColorConfig;
-  image?: string;
+}
+
+export type BackgroundImageMode = 'none' | 'fixed' | 'field' | 'inline';
+export type BackgroundImageSize = 'auto' | 'cover' | 'contain' | 'stretch';
+
+export interface CanvasBackground {
+  color: string;
+  imageMode: BackgroundImageMode;
+  imageUrl?: string;
+  imageField?: string;
+  imageData?: string;
+  imageFormat?: 'svg+xml' | 'svg+xml;base64' | 'png' | 'jpeg';
+  imageSize?: BackgroundImageSize;
 }
 
 export interface CanvasElement {
@@ -109,7 +121,7 @@ export interface CanvasConnection {
 export interface CanvasOptions {
   elements: CanvasElement[];
   connections: CanvasConnection[];
-  background: { color: string; image?: string };
+  background: CanvasBackground;
   inlineEditing: boolean;
   panZoom: boolean;
 }

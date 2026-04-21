@@ -1,8 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { EventBus, GrafanaTheme2, PanelData } from '@grafana/data';
 import { useTheme2 } from '@grafana/ui';
-import { AnchorPoint, CanvasConnection, CanvasElement, CanvasOptions, PixelRect } from '../types';
+import { AnchorPoint, BackgroundImageSize, CanvasConnection, CanvasElement, CanvasOptions, PixelRect } from '../types';
 import { resolvePixelRect } from '../utils/placement';
+import { resolveBackgroundImage } from '../utils/colorUtils';
 import { ElementRegistry } from './elements';
 import { useDataBinding } from './hooks/useDataBinding';
 import { ConnectionLayer, ConnectionLayerHandle, anchorPixel, ALL_ANCHORS } from './ConnectionLayer';
@@ -484,6 +485,17 @@ export const CanvasContainer: React.FC<Props> = ({
     rectMap.set(el.id, resolvePixelRect(el.placement, el.constraint, width, height));
   }
 
+  // ── resolve background image ─────────────────────────────────────────────────
+
+  const bgImageUrl = resolveBackgroundImage(options.background, data.series);
+  const bgSizeMap: Record<BackgroundImageSize, string> = {
+    auto: 'auto',
+    cover: 'cover',
+    contain: 'contain',
+    stretch: '100% 100%',
+  };
+  const bgSize = bgSizeMap[options.background.imageSize ?? 'cover'];
+
   return (
     <CanvasEditContext.Provider value={editCtx}>
       <div
@@ -494,8 +506,10 @@ export const CanvasContainer: React.FC<Props> = ({
           height,
           overflow: 'hidden',
           background: options.background.color || 'transparent',
-          backgroundImage: options.background.image ? `url(${options.background.image})` : undefined,
-          backgroundSize: 'cover',
+          backgroundImage: bgImageUrl ? `url(${bgImageUrl})` : undefined,
+          backgroundSize: bgImageUrl ? bgSize : undefined,
+          backgroundRepeat: bgImageUrl ? 'no-repeat' : undefined,
+          backgroundPosition: bgImageUrl ? 'center' : undefined,
           cursor: drawingConnSrc ? 'crosshair' : undefined,
         }}
         onClick={() => {

@@ -1,5 +1,5 @@
 import { DataFrame, Field, FieldType, GrafanaTheme2, ThresholdsMode } from '@grafana/data';
-import { CanvasElement, ColorConfig } from '../types';
+import { CanvasBackground, CanvasElement, ColorConfig } from '../types';
 
 function getLastValue(field: Field): number | string | null {
   const vals = field.values;
@@ -142,4 +142,41 @@ export function resolveImageSrc(element: CanvasElement, series: DataFrame[]): st
   }
 
   return '';
+}
+
+export function resolveBackgroundImage(background: CanvasBackground, series: DataFrame[]): string {
+  switch (background.imageMode) {
+    case 'fixed':
+      return background.imageUrl ?? '';
+
+    case 'field': {
+      if (!background.imageField) {
+        return '';
+      }
+      const field = findField(series, background.imageField);
+      if (!field) {
+        return '';
+      }
+      const val = getLastValue(field);
+      return val !== null ? String(val) : '';
+    }
+
+    case 'inline': {
+      const fmt = background.imageFormat ?? 'png';
+      const data = background.imageData ?? '';
+      if (!data) {
+        return '';
+      }
+      if (fmt === 'svg+xml') {
+        return `data:image/svg+xml,${encodeURIComponent(data)}`;
+      }
+      if (fmt === 'svg+xml;base64') {
+        return `data:image/svg+xml;base64,${data}`;
+      }
+      return `data:image/${fmt};base64,${data}`;
+    }
+
+    default:
+      return '';
+  }
 }
